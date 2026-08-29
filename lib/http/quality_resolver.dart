@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' show max;
 
 import 'package:PiliPlus/http/browser_ua.dart';
@@ -11,6 +12,7 @@ import 'package:PiliPlus/models/user/info.dart';
 import 'package:PiliPlus/models/video/play/url.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/accounts/account.dart';
+import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:dio/dio.dart';
@@ -112,6 +114,11 @@ abstract final class QualityResolver {
   ///
   /// 返回原始信封 JSON（ugc 为 {code, data}，pgc 为 {code, result}），
   /// 失败返回 null（已按需 Toast 提示原因）。
+  ///
+  /// 通道选择（与脚本一致）：
+  /// - 番剧(pgc)：优先 POST /api/bzview3（转发 web 播放器的 playview 请求体），
+  ///   失败自动回退 bzview2 + playurl 签名地址；
+  /// - 普通视频(ugc/pugv)：POST /api/bzview2（playurl 签名地址）。
   static Future<Map<String, dynamic>?> resolvePlayUrl({
     required VideoType videoType,
     int? avid,
@@ -138,21 +145,69 @@ abstract final class QualityResolver {
       }
       final ui = await buildUi();
       if (ui == null) return null;
-      final url = await VideoHttp.buildSignedPlayUrl(
-        videoType: videoType,
-        avid: avid,
-        bvid: bvid,
-        cid: cid,
-        qn: qn,
-        epid: epid,
-        seasonId: seasonId,
-        tryLook: tryLook,
-        language: language,
-        voiceBalance: voiceBalance,
-      );
+
+      Map<String, dynamic>? envelope;
+      if (videoType == .pgc) {
+        envelope = await _post('bzview3', {
+          'iic': false,
+          'ui': ui,
+          'body': jsonEncode({
+            'avid': bvid != null ? IdUtils.bv2av(bvid) : (avid ?? 0),
+            'cid': cid,
+            'qn': qn,
+            'fnver': 0,
+            'fnval': 4048,
+            'session': '',
+            'ep_id': epid ?? 0,
+          }),
+        });
+      }
+      envelope ??= await _post('bzview2', {
+        'ui': ui,
+        'url': await VideoHttp.buildSignedPlayUrl(
+          videoType: videoType,
+          avid: avid,
+          bvid: bvid,
+          cid: cid,
+          qn: qn,
+          epid: epid,
+          seasonId: seasonId,
+          tryLook: tryLook,
+          language: language,
+          voiceBalance: voiceBalance,
+        ),
+      });
+      if (envelope == null) return null;
+
+      switch (envelope['code']) {
+        case 0:
+          return _cache[key] = envelope;
+        case 9:
+          _toastQuota();
+          return null;
+        case 1:
+          if (!silent) SmartDialog.showToast('连接解析服务器失败');
+          return null;
+        default:
+          final message = envelope['message'];
+          if (!silent && message is String && message.isNotEmpty) {
+            SmartDialog.showToast(message);
+          }
+          return null;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 向解析服务器的 /api/[api] 发送 POST，返回信封 JSON；连接层失败触发熔断
+  static Future<Map<String, dynamic>?> _post(
+    String api,
+    Map<String, dynamic> data,
+  ) async {
+    try {
       final res = await Request().post(
-        '${Pref.qualityResolverHome}/api/bzview2',
-        data: {'ui': ui, 'url': url},
+        '${Pref.qualityResolverHome}/api/$api',
+        data: data,
         options: _options,
       );
       if (res.statusCode == -1) {
@@ -160,27 +215,10 @@ abstract final class QualityResolver {
         _downUntil = DateTime.now().add(const Duration(minutes: 10));
         return null;
       }
-      if (res.data case final Map<String, dynamic> data) {
-        switch (data['code']) {
-          case 0:
-            return _cache[key] = data;
-          case 9:
-            _toastQuota();
-            return null;
-          case 1:
-            if (!silent) SmartDialog.showToast('连接解析服务器失败');
-            return null;
-          default:
-            final message = data['message'];
-            if (!silent && message is String && message.isNotEmpty) {
-              SmartDialog.showToast(message);
-            }
-            return null;
-        }
-      }
-      if (!silent) SmartDialog.showToast('连接解析服务器失败');
-    } catch (_) {}
-    return null;
+      return res.data is Map<String, dynamic> ? res.data : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// code=9 提示的 15 分钟冷却（与脚本一致）
