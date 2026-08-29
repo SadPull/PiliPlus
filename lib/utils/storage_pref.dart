@@ -359,6 +359,16 @@ abstract final class Pref {
     defaultValue: HttpString.sponsorBlockBaseUrl,
   );
 
+  static bool get enableQualityUnlock => _setting.get(
+    SettingBoxKey.enableQualityUnlock,
+    defaultValue: false,
+  );
+
+  static String get qualityResolverHome => _setting.get(
+    SettingBoxKey.qualityResolverHome,
+    defaultValue: HttpString.qualityResolverBaseUrl,
+  );
+
   static bool get blockTrack =>
       _setting.get(SettingBoxKey.blockTrack, defaultValue: !kDebugMode);
 

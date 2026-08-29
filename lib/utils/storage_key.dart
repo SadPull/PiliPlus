@@ -20,6 +20,8 @@ abstract final class SettingBoxKey {
       videoSync = 'videoSync',
       autosync = 'autosync',
       p1080 = 'p1080',
+      enableQualityUnlock = 'enableQualityUnlock',
+      qualityResolverHome = 'qualityResolverHome',
       enableAutoEnter = 'enableAutoEnter',
       enableAutoExit = 'enableAutoExit',
       enableOnlineTotal = 'enableOnlineTotal',

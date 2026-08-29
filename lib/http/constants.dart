@@ -13,4 +13,7 @@ abstract final class HttpString {
   static const String mallBaseUrl = 'https://mall.bilibili.com';
 
   static const String sponsorBlockBaseUrl = 'https://www.bsbsb.top';
+
+  /// 第三方高画质解析服务器（默认值，可在设置中修改）
+  static const String qualityResolverBaseUrl = 'http://220.205.16.51:20291';
 }
