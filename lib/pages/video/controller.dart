@@ -13,6 +13,7 @@ import 'package:PiliPlus/http/browser_ua.dart';
 import 'package:PiliPlus/http/fav.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/loading_state.dart';
+import 'package:PiliPlus/http/quality_resolver.dart';
 import 'package:PiliPlus/http/user.dart';
 import 'package:PiliPlus/http/video.dart';
 import 'package:PiliPlus/models/common/account_type.dart';
@@ -903,6 +904,21 @@ class VideoDetailController extends GetxController
         }
       }
 
+      // 第三方高画质解析：存在会员限定画质时自动解析最高一档（静默，失败不影响播放）
+      if (Pref.enableQualityUnlock) {
+        await QualityResolver.unlockHighest(
+          videoType: _actualVideoType ?? videoType,
+          bvid: bvid,
+          cid: cid.value,
+          epid: epId,
+          seasonId: seasonId,
+          tryLook: plPlayerController.tryLook,
+          language: currLang.value,
+          voiceBalance: plPlayerController.enableAudioNormalization,
+          base: data,
+        );
+      }
+
       final List<VideoItem> videoList = data.dash!.video!;
       // if (kDebugMode) debugPrint("allVideosList:${allVideosList}");
       // 当前可播放的最高质量视频
@@ -982,6 +998,31 @@ class VideoDetailController extends GetxController
       result.toast();
     }
     isQuerying = false;
+  }
+
+  /// 点击未解锁画质：经第三方解析服务获取该画质并合并进当前播放数据
+  Future<bool> unlockQuality(int qn) async {
+    try {
+      final envelope = await QualityResolver.resolvePlayUrl(
+        videoType: _actualVideoType ?? videoType,
+        bvid: bvid,
+        cid: cid.value,
+        epid: epId,
+        seasonId: seasonId,
+        tryLook: plPlayerController.tryLook,
+        language: currLang.value,
+        voiceBalance: plPlayerController.enableAudioNormalization,
+        qn: qn,
+      );
+      if (envelope == null) return false;
+      return QualityResolver.mergeInto(
+        data,
+        envelope,
+        _actualVideoType ?? videoType,
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   late final List<PostSegmentModel> postList = <PostSegmentModel>[];

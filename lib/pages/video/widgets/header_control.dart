@@ -14,6 +14,7 @@ import 'package:PiliPlus/http/danmaku_block.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/live.dart';
 import 'package:PiliPlus/http/loading_state.dart';
+import 'package:PiliPlus/http/quality_resolver.dart';
 import 'package:PiliPlus/http/video.dart';
 import 'package:PiliPlus/models/common/super_resolution_type.dart';
 import 'package:PiliPlus/models/common/video/audio_quality.dart';
@@ -922,6 +923,17 @@ class HeaderControlState extends State<HeaderControl>
       }
     }
 
+    // 第三方高画质解析：未解锁画质可按需解析
+    final bool unlockEnabled = QualityResolver.canUse;
+    final Set<int> validQaCodes = {
+      for (final qa in VideoQuality.values) qa.code,
+    };
+    bool canResolve(FormatItem item) =>
+        unlockEnabled &&
+        item.quality != null &&
+        validQaCodes.contains(item.quality) &&
+        !idSet.contains(item.quality);
+
     showBottomSheet(
       (context, setState) {
         final theme = Theme.of(context);
@@ -966,8 +978,20 @@ class HeaderControlState extends State<HeaderControl>
                         if (isCurr) {
                           return;
                         }
-                        Get.back();
                         final int quality = item.quality!;
+                        if (!idSet.contains(quality) && canResolve(item)) {
+                          // 按需解析该画质后继续正常切换流程
+                          Get.back();
+                          SmartDialog.showToast(
+                            '正在解析：${item.newDesc ?? item.format ?? quality}',
+                          );
+                          if (!await videoDetailCtr.unlockQuality(quality)) {
+                            // 失败原因已由解析器提示
+                            return;
+                          }
+                        } else {
+                          Get.back();
+                        }
                         final newQa = VideoQuality.fromCode(quality);
                         videoDetailCtr
                           ..plPlayerController.cacheVideoQa = newQa.code
@@ -987,7 +1011,9 @@ class HeaderControlState extends State<HeaderControl>
                         }
                       },
                       // 可能包含会员解锁画质
-                      enabled: index >= totalQaSam - usefulQaSam,
+                      enabled:
+                          index >= totalQaSam - usefulQaSam ||
+                          canResolve(item),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 20,
                       ),
