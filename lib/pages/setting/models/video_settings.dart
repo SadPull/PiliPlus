@@ -37,6 +37,19 @@ List<SettingsModel> get videoSettings => [
     setKey: SettingBoxKey.p1080,
     defaultVal: true,
   ),
+  const SwitchModel(
+    title: '第三方高画质解析',
+    subtitle: '存在会员限定画质时经解析服务获取更高画质选项。会把账号Cookie提交给第三方服务器，存在风险，开启时会再次确认',
+    leading: Icon(Icons.high_quality),
+    setKey: SettingBoxKey.enableQualityUnlock,
+    defaultVal: false,
+  ),
+  NormalModel(
+    title: '解析服务器',
+    leading: const Icon(MdiIcons.server),
+    getSubtitle: () => Pref.qualityResolverHome,
+    onTap: _showResolverDialog,
+  ),
   NormalModel(
     title: 'B站定向流量支持',
     subtitle: '若套餐含B站定向流量，则会自动使用。可查阅运营商的流量记录确认。',
@@ -178,6 +191,41 @@ List<SettingsModel> get videoSettings => [
     onTap: _showHwDecDialog,
   ),
 ];
+
+void _showResolverDialog(BuildContext context, VoidCallback setState) {
+  String home = Pref.qualityResolverHome;
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('解析服务器'),
+      content: TextFormField(
+        autofocus: true,
+        initialValue: home,
+        onChanged: (value) => home = value,
+        decoration: const InputDecoration(hintText: 'http://host:port'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: Get.back,
+          child: Text(
+            '取消',
+            style: TextStyle(color: ColorScheme.of(context).outline),
+          ),
+        ),
+        TextButton(
+          onPressed: () {
+            final val = home.trim();
+            if (val.isEmpty) return;
+            Get.back();
+            GStorage.setting.put(SettingBoxKey.qualityResolverHome, val);
+            setState();
+          },
+          child: const Text('确定'),
+        ),
+      ],
+    ),
+  );
+}
 
 Future<void> _showCDNDialog(BuildContext context, VoidCallback setState) async {
   final res = await showDialog<CDNService>(

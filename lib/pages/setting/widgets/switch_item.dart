@@ -77,6 +77,16 @@ class _SetSwitchItemState extends State<SetSwitchItem> {
       );
     }
 
+    if (widget.setKey == SettingBoxKey.enableQualityUnlock && val) {
+      val = await showConfirmDialog(
+        context: context,
+        title: const Text('开启第三方高画质解析？'),
+        content: const Text(
+          '存在会员限定画质时，客户端会将你的B站登录Cookie提交给第三方解析服务器（明文HTTP）换取更高画质。\n\n存在Cookie暴露与账号风控风险；解析次数有每日免费上限。',
+        ),
+      );
+    }
+
     if (widget.setKey == SettingBoxKey.appFontWeight) {
       await GStorage.setting.put(SettingBoxKey.appFontWeight, val ? 4 : -1);
     } else {
