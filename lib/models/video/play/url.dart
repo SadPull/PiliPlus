@@ -58,6 +58,9 @@ class PlayUrlModel {
   Language? language;
   List<SegmentItemModel>? clipInfoList;
 
+  /// 番剧试看标记(pgc 接口的 is_preview)
+  bool isPreview = false;
+
   PlayUrlModel.fromJson(Map<String, dynamic> json) {
     from = json['from'];
     result = json['result'];
@@ -67,6 +70,7 @@ class PlayUrlModel {
     timeLength = json['timelength'];
     acceptFormat = json['accept_format'];
     acceptDesc = json['accept_description'];
+    isPreview = json['is_preview'] == 1 || json['is_preview'] == true;
     acceptQuality = (json['accept_quality'] as List?)
         ?.map<int>((e) => e as int)
         .toList();

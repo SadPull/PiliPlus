@@ -112,6 +112,7 @@ class VideoDetailController extends GetxController
 
   // 请求返回的视频信息
   late PlayUrlModel data;
+  DateTime? _pgcFailTipUntil;
   final RxBool videoState = false.obs;
 
   /// 播放器配置 画质 音质 解码格式
@@ -890,6 +891,10 @@ class VideoDetailController extends GetxController
           currentDecodeFormats = VideoDecodeFormatType.AVC;
           currentVideoQa.value = videoQuality;
           await _initPlayerIfNeeded(autoFullScreenFlag);
+          // 会员番剧剧集: 试看(durl)已开播, 后台解析整集并热切换
+          if (isPgcPreview) {
+            unawaited(_resolveFullEpisode());
+          }
           isQuerying = false;
           return;
         } else {
@@ -909,7 +914,7 @@ class VideoDetailController extends GetxController
       final bool isPgcPreview =
           Pref.enableQualityUnlock &&
           (_actualVideoType ?? videoType) == .pgc &&
-          data.acceptDesc?.contains('试看') == true;
+          data.isPreview;
       if (Pref.enableQualityUnlock && !isPgcPreview) {
         await QualityResolver.unlockHighest(
           videoType: _actualVideoType ?? videoType,
@@ -1014,7 +1019,7 @@ class VideoDetailController extends GetxController
   Future<bool> unlockQuality(int qn) async {
     try {
       final pgcType = (_actualVideoType ?? videoType) == .pgc;
-      if (pgcType && data.acceptDesc?.contains('试看') == true) {
+      if (pgcType && data.isPreview) {
         // 会员剧集: 整集替换后按所点画质播放
         final full = await QualityResolver.resolvePgcReplacement(
           bvid: bvid,
@@ -1025,10 +1030,7 @@ class VideoDetailController extends GetxController
           base: data,
         );
         if (full == null) return false;
-        if (full.dash?.audio == null) {
-          currentAudioQa = null;
-        }
-        data = full;
+        _applyFullEpisode(full);
         currentVideoQa.value = _pickQa(full, qn);
         return true;
       }
@@ -1070,6 +1072,7 @@ class VideoDetailController extends GetxController
   Future<void> _resolveFullEpisode() async {
     final targetCid = cid.value;
     final targetBvid = bvid;
+    final failTip = <String>[];
     try {
       final full = await QualityResolver.resolvePgcReplacement(
         bvid: bvid,
@@ -1078,21 +1081,46 @@ class VideoDetailController extends GetxController
         seasonId: seasonId,
         qn: plPlayerController.cacheVideoQa ?? 80,
         base: data,
+        onFail: failTip.add,
       );
       if (full == null || cid.value != targetCid || bvid != targetBvid) {
+        if (failTip.isNotEmpty && cid.value == targetCid) {
+          // 失败原因提示(5 分钟节流, 便于定位服务器侧问题)
+          final now = DateTime.now();
+          if (_pgcFailTipUntil == null || now.isAfter(_pgcFailTipUntil!)) {
+            _pgcFailTipUntil = now.add(const Duration(minutes: 5));
+            SmartDialog.showToast('番剧解析失败：${failTip.first}');
+          }
+        }
         return;
       }
-      if (full.dash?.audio == null) {
-        currentAudioQa = null;
-      }
-      data = full;
-      currentVideoQa.value = _pickQa(
-        full,
-        plPlayerController.cacheVideoQa ?? 80,
-      );
+      _applyFullEpisode(full);
       SmartDialog.showToast('整集解析成功，正在切换完整剧集');
       updatePlayer();
     } catch (_) {}
+  }
+
+  /// 应用解析出的完整剧集数据(替换试看)并重选音画质
+  void _applyFullEpisode(PlayUrlModel full) {
+    if (full.dash?.audio == null) {
+      currentAudioQa = null;
+    } else {
+      final audioIds = full.dash!.audio!.map((e) => e.id!).toList();
+      int closest = audioIds.findClosestTarget(
+        (e) => e <= plPlayerController.cacheAudioQa,
+        (a, b) => a > b ? a : b,
+      );
+      if (!audioIds.contains(plPlayerController.cacheAudioQa) &&
+          audioIds.any((e) => e > plPlayerController.cacheAudioQa)) {
+        closest = AudioQuality.k192.code;
+      }
+      currentAudioQa = AudioQuality.fromCode(closest);
+    }
+    data = full;
+    currentVideoQa.value = _pickQa(
+      full,
+      plPlayerController.cacheVideoQa ?? 80,
+    );
   }
 
   late final List<PostSegmentModel> postList = <PostSegmentModel>[];

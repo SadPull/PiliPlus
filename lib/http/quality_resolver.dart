@@ -31,7 +31,7 @@ abstract final class QualityResolver {
   static int? _registeredMid;
   static final Map<String, Map<String, dynamic>> _cache = {};
   static DateTime? _quotaTipUntil;
-  static DateTime? _downUntil;
+  static final Map<String, DateTime> _circuitOpenUntil = {};
 
   /// 功能开关 + 已登录
   static bool get canUse =>
@@ -40,10 +40,11 @@ abstract final class QualityResolver {
   static LoginAccount? get _loginAccount =>
       Accounts.main is LoginAccount ? Accounts.main as LoginAccount : null;
 
-  /// 连接层失败后的熔断：10 分钟内不再尝试，避免拖慢播放
-  static bool get _circuitOpen {
-    final downUntil = _downUntil;
-    return downUntil != null && DateTime.now().isBefore(downUntil);
+  /// 连接层失败后的熔断(按接口隔离, 10 分钟)：避免持续拖慢播放;
+  /// bzview3 失败不影响 bzview2, 反之亦然
+  static bool _circuitOpen(String api) {
+    final until = _circuitOpenUntil[api];
+    return until != null && DateTime.now().isBefore(until);
   }
 
   static Options get _options => Options(
@@ -134,23 +135,29 @@ abstract final class QualityResolver {
     bool voiceBalance = false,
     required int qn,
     bool silent = false,
+    void Function(String reason)? onFail,
   }) async {
     final account = _loginAccount;
     if (account == null) return null;
     final key = '${videoType.name}:${bvid ?? avid}:$cid:$qn';
     if (_cache[key] case final Map<String, dynamic> cached) return cached;
-    if (_circuitOpen) return null;
+
+    String fail(String reason) {
+      if (!silent) SmartDialog.showToast(reason);
+      onFail?.call(reason);
+      return null;
+    }
 
     try {
       if (!await _ensureRegistered(account.mid)) {
-        if (!silent) SmartDialog.showToast('连接解析服务器失败');
-        return null;
+        return fail('连接解析服务器失败');
       }
       final ui = await buildUi();
-      if (ui == null) return null;
+      if (ui == null) return fail('获取账号信息失败');
 
       Map<String, dynamic>? envelope;
-      if (videoType == .pgc) {
+      var reason = '';
+      if (videoType == .pgc && !_circuitOpen('bzview3')) {
         envelope = await _post('bzview3', {
           'iic': false,
           'ui': ui,
@@ -164,45 +171,56 @@ abstract final class QualityResolver {
             'ep_id': epid ?? 0,
           }),
         });
+        if (envelope == null && _circuitOpen('bzview3')) {
+          reason = '解析服务器无响应';
+        }
       }
-      envelope ??= await _post('bzview2', {
-        'ui': ui,
-        'url': await VideoHttp.buildSignedPlayUrl(
-          videoType: videoType,
-          avid: avid,
-          bvid: bvid,
-          cid: cid,
-          qn: qn,
-          epid: epid,
-          seasonId: seasonId,
-          tryLook: tryLook,
-          language: language,
-          voiceBalance: voiceBalance,
-        ),
-      });
-      if (envelope == null) return null;
+      if (envelope == null && !_circuitOpen('bzview2')) {
+        envelope = await _post('bzview2', {
+          'ui': ui,
+          'url': await VideoHttp.buildSignedPlayUrl(
+            videoType: videoType,
+            avid: avid,
+            bvid: bvid,
+            cid: cid,
+            qn: qn,
+            epid: epid,
+            seasonId: seasonId,
+            tryLook: tryLook,
+            language: language,
+            voiceBalance: voiceBalance,
+          ),
+        });
+        if (envelope == null && reason.isEmpty) {
+          reason = _circuitOpen('bzview2')
+              ? '解析服务器无响应'
+              : '解析服务器响应异常';
+        }
+      }
+      if (envelope == null) {
+        return fail(reason.isEmpty ? '解析失败' : reason);
+      }
 
       switch (envelope['code']) {
         case 0:
           return _cache[key] = envelope;
         case 9:
           _toastQuota();
-          return null;
+          return fail('今日免费使用次数已达上限');
         case 1:
-          if (!silent) SmartDialog.showToast('连接解析服务器失败');
-          return null;
+          return fail('连接解析服务器失败');
         default:
           final message = envelope['message'];
-          if (!silent && message is String && message.isNotEmpty) {
-            SmartDialog.showToast(message);
-          }
-          return null;
+          return fail(
+            message is String && message.isNotEmpty ? message : '解析失败',
+          );
       }
-    } catch (_) {}
-    return null;
+    } catch (_) {
+      return fail('解析异常');
+    }
   }
 
-  /// 向解析服务器的 /api/[api] 发送 POST，返回信封 JSON；连接层失败触发熔断
+  /// 向解析服务器的 /api/[api] 发送 POST，返回信封 JSON；连接层失败触发该接口熔断
   static Future<Map<String, dynamic>?> _post(
     String api,
     Map<String, dynamic> data,
@@ -214,8 +232,8 @@ abstract final class QualityResolver {
         options: _options,
       );
       if (res.statusCode == -1) {
-        // 连接层失败（超时/不可达），熔断一段时间
-        _downUntil = DateTime.now().add(const Duration(minutes: 10));
+        // 连接层失败（超时/不可达/被重置），该接口熔断一段时间
+        _circuitOpenUntil[api] = DateTime.now().add(const Duration(minutes: 10));
         return null;
       }
       return res.data is Map<String, dynamic> ? res.data : null;
@@ -340,7 +358,7 @@ abstract final class QualityResolver {
   /// 番剧解锁:
   /// - 会员剧集(试看): 经服务器解析整集, 返回完整 PlayUrlModel 用于整体替换试看数据
   /// - 免费剧集: 仅合并更高画质(原地修改 base, 返回 null)
-  /// 任何失败 fail-open(返回 null, 保持原有试看/画质不变)。
+  /// 任何失败 fail-open(返回 null, 保持原有试看/画质不变), 原因经 [onFail] 上报。
   static Future<PlayUrlModel?> resolvePgcReplacement({
     String? bvid,
     required int cid,
@@ -348,11 +366,11 @@ abstract final class QualityResolver {
     dynamic seasonId,
     required int qn,
     required PlayUrlModel base,
+    void Function(String reason)? onFail,
   }) async {
     if (!canUse) return null;
     try {
-      final isPreview = base.acceptDesc?.contains('试看') == true;
-      if (!isPreview) {
+      if (!base.isPreview) {
         await unlockHighest(
           videoType: .pgc,
           bvid: bvid,
@@ -372,14 +390,24 @@ abstract final class QualityResolver {
         seasonId: seasonId,
         tryLook: false,
         qn: qn,
+        silent: true,
+        onFail: onFail,
       );
       if (envelope == null) return null;
       final payload = _payloadOf(.pgc, envelope);
       if (payload == null) return null;
+      // 服务器仍返回试看数据则替换无意义
+      if (payload['is_preview'] == 1 || payload['is_preview'] == true) {
+        onFail?.call('服务器未返回完整剧集');
+        return null;
+      }
       _stripFlags(payload);
       final full = PlayUrlModel.fromJson(payload);
       final videoList = full.dash?.video;
-      if (videoList == null || videoList.isEmpty) return null;
+      if (videoList == null || videoList.isEmpty) {
+        onFail?.call('服务器未返回可用视频流');
+        return null;
+      }
       // 保留试看阶段的续播进度
       full.lastPlayTime = base.lastPlayTime;
       return full;
