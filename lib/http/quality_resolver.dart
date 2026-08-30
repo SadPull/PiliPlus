@@ -299,7 +299,8 @@ abstract final class QualityResolver {
           if (data is Map && data['video_info'] is Map<String, dynamic>) {
             return data['video_info'];
           }
-          if (data is Map && (data['dash'] != null || data['durl'] != null)) {
+          if (data is Map<String, dynamic> &&
+              (data['dash'] != null || data['durl'] != null)) {
             return data;
           }
           return null;
