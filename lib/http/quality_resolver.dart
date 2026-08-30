@@ -142,7 +142,7 @@ abstract final class QualityResolver {
     final key = '${videoType.name}:${bvid ?? avid}:$cid:$qn';
     if (_cache[key] case final Map<String, dynamic> cached) return cached;
 
-    String fail(String reason) {
+    Map<String, dynamic>? fail(String reason) {
       if (!silent) SmartDialog.showToast(reason);
       onFail?.call(reason);
       return null;

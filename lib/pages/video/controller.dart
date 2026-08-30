@@ -835,6 +835,12 @@ class VideoDetailController extends GetxController
     if (result case Success(:final response)) {
       data = response;
 
+      // 会员番剧剧集(试看)标记, 供 durl 分支与画质钩子使用
+      final bool isPgcPreview =
+          Pref.enableQualityUnlock &&
+          (_actualVideoType ?? videoType) == .pgc &&
+          data.isPreview;
+
       languages.value = data.language?.items;
       currLang.value = data.curLanguage;
 
@@ -911,10 +917,6 @@ class VideoDetailController extends GetxController
 
       // 第三方解析: 会员番剧剧集走后台整集替换(不阻塞试看播放);
       // 普通视频/免费番剧 自动解锁最高一档画质(静默，失败不影响播放)
-      final bool isPgcPreview =
-          Pref.enableQualityUnlock &&
-          (_actualVideoType ?? videoType) == .pgc &&
-          data.isPreview;
       if (Pref.enableQualityUnlock && !isPgcPreview) {
         await QualityResolver.unlockHighest(
           videoType: _actualVideoType ?? videoType,
