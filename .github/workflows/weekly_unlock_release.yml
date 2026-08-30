@@ -1,0 +1,122 @@
+name: Weekly unlock release
+
+# 每周自动同步上游 bggRGjQaUbCoE/PiliPlus 到本仓库 main，
+# 用固定签名构建 Android APK 并发布 Release（unlock-YYYYMMDD）。
+# 补丁维护方式：合并式 —— 功能提交保留在 main 历史里；
+# 合并/编译冲突时本工作流红灯并邮件提醒，本地解决后下次运行自动恢复。
+
+on:
+    schedule:
+        - cron: "0 1 * * 1" # 每周一 UTC 01:00 = 北京时间 09:00
+    workflow_dispatch:
+        inputs:
+            force:
+                description: "上游无更新时也强制构建发布"
+                required: false
+                default: false
+                type: boolean
+
+permissions:
+    contents: write
+
+concurrency:
+    group: weekly-unlock-release
+    cancel-in-progress: false
+
+jobs:
+    sync-and-release:
+        name: Sync upstream & release
+        runs-on: ubuntu-latest
+        steps:
+            - name: 代码迁出
+              uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+
+            - name: 配置 git
+              run: |
+                  git config user.name "unlock-bot"
+                  git config user.email "unlock-bot@users.noreply.github.com"
+                  echo "DATE=$(date +%Y%m%d)" >> "$GITHUB_ENV"
+
+            - name: 同步上游
+              id: sync
+              run: |
+                  git remote add upstream https://github.com/bggRGjQaUbCoE/PiliPlus.git
+                  git fetch upstream main --no-tags
+                  BEHIND=$(git rev-list HEAD..upstream/main --count)
+                  echo "upstream 新提交: $BEHIND"
+                  FORCE="${{ inputs.force }}"
+                  if [ "$BEHIND" -eq 0 ] && [ "$FORCE" != "true" ]; then
+                    echo "上游无更新，跳过构建"
+                    echo "build=false" >> "$GITHUB_OUTPUT"
+                    exit 0
+                  fi
+                  if [ "$BEHIND" -gt 0 ]; then
+                    git merge upstream/main --no-edit
+                    git push origin main
+                  fi
+                  echo "build=true" >> "$GITHUB_OUTPUT"
+
+            - name: 构建Java环境
+              if: steps.sync.outputs.build == 'true'
+              uses: actions/setup-java@v5
+              with:
+                  distribution: "zulu"
+                  java-version: "17"
+                  cache: "gradle"
+                  cache-dependency-path: |
+                      android/*.gradle*
+                      android/**/gradle-wrapper.properties
+
+            - name: 安装Flutter
+              if: steps.sync.outputs.build == 'true'
+              uses: subosito/flutter-action@v2
+              with:
+                  channel: stable
+                  flutter-version-file: pubspec.yaml
+                  cache: true
+
+            - name: Apply Patch
+              if: steps.sync.outputs.build == 'true'
+              shell: pwsh
+              run: lib/scripts/patch.ps1 android
+
+            - name: Write key
+              if: steps.sync.outputs.build == 'true'
+              run: |
+                  if [ ! -z "${{ secrets.SIGN_KEYSTORE_BASE64 }}" ]; then
+                    echo "${{ secrets.SIGN_KEYSTORE_BASE64 }}" | base64 --decode > android/app/key.jks
+                    echo storeFile='key.jks' >> android/key.properties
+                    echo storePassword='${{ secrets.KEYSTORE_PASSWORD }}' >> android/key.properties
+                    echo keyAlias='${{ secrets.KEY_ALIAS }}' >> android/key.properties
+                    echo keyPassword='${{ secrets.KEY_PASSWORD }}' >> android/key.properties
+                  fi
+
+            - name: Set and Extract version
+              if: steps.sync.outputs.build == 'true'
+              shell: pwsh
+              run: lib/scripts/build.ps1 android
+
+            - name: Flutter Build Release Apk
+              if: steps.sync.outputs.build == 'true'
+              run: flutter build apk --release --split-per-abi --dart-define-from-file=pili_release.json --no-pub
+
+            - name: Rename
+              if: steps.sync.outputs.build == 'true'
+              run: |
+                  for file in build/app/outputs/flutter-apk/app-*-release.apk; do
+                    abi=$(echo "$file" | sed -E 's|.*app-(.*)-release\.apk|\1|')
+                    mv "$file" "PiliPlus_android_${{ env.version }}_${abi}.apk"
+                  done
+              shell: bash
+
+            - name: Release
+              if: steps.sync.outputs.build == 'true'
+              uses: softprops/action-gh-release@v3
+              with:
+                  tag_name: unlock-${{ env.DATE }}
+                  name: PiliPlus 解锁版 ${{ env.version }}
+                  files: PiliPlus_android_*.apk
+                  generate_release_notes: true
+                  make_latest: "true"
