@@ -49,6 +49,9 @@ abstract final class QualityResolver {
   static Options get _options => Options(
     contentType: Headers.jsonContentType,
     validateStatus: (status) => true,
+    // 解析服务器处理较慢(实测 >20s)，覆盖全局 10s 超时
+    sendTimeout: const Duration(seconds: 20),
+    receiveTimeout: const Duration(seconds: 90),
     // 外部服务器，不注入 B 站 Cookie / 账号头
     extra: {'account': const NoAccount()},
   );
@@ -331,6 +334,57 @@ abstract final class QualityResolver {
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// 番剧解锁:
+  /// - 会员剧集(试看): 经服务器解析整集, 返回完整 PlayUrlModel 用于整体替换试看数据
+  /// - 免费剧集: 仅合并更高画质(原地修改 base, 返回 null)
+  /// 任何失败 fail-open(返回 null, 保持原有试看/画质不变)。
+  static Future<PlayUrlModel?> resolvePgcReplacement({
+    String? bvid,
+    required int cid,
+    dynamic epid,
+    dynamic seasonId,
+    required int qn,
+    required PlayUrlModel base,
+  }) async {
+    if (!canUse) return null;
+    try {
+      final isPreview = base.acceptDesc?.contains('试看') == true;
+      if (!isPreview) {
+        await unlockHighest(
+          videoType: .pgc,
+          bvid: bvid,
+          cid: cid,
+          epid: epid,
+          seasonId: seasonId,
+          tryLook: false,
+          base: base,
+        );
+        return null;
+      }
+      final envelope = await resolvePlayUrl(
+        videoType: .pgc,
+        bvid: bvid,
+        cid: cid,
+        epid: epid,
+        seasonId: seasonId,
+        tryLook: false,
+        qn: qn,
+      );
+      if (envelope == null) return null;
+      final payload = _payloadOf(.pgc, envelope);
+      if (payload == null) return null;
+      _stripFlags(payload);
+      final full = PlayUrlModel.fromJson(payload);
+      final videoList = full.dash?.video;
+      if (videoList == null || videoList.isEmpty) return null;
+      // 保留试看阶段的续播进度
+      full.lastPlayTime = base.lastPlayTime;
+      return full;
+    } catch (_) {
+      return null;
     }
   }
 

@@ -904,8 +904,13 @@ class VideoDetailController extends GetxController
         }
       }
 
-      // 第三方高画质解析：存在会员限定画质时自动解析最高一档（静默，失败不影响播放）
-      if (Pref.enableQualityUnlock) {
+      // 第三方解析: 会员番剧剧集走后台整集替换(不阻塞试看播放);
+      // 普通视频/免费番剧 自动解锁最高一档画质(静默，失败不影响播放)
+      final bool isPgcPreview =
+          Pref.enableQualityUnlock &&
+          (_actualVideoType ?? videoType) == .pgc &&
+          data.acceptDesc?.contains('试看') == true;
+      if (Pref.enableQualityUnlock && !isPgcPreview) {
         await QualityResolver.unlockHighest(
           videoType: _actualVideoType ?? videoType,
           bvid: bvid,
@@ -989,6 +994,11 @@ class VideoDetailController extends GetxController
         audioUrl = '';
       }
       await _initPlayerIfNeeded(autoFullScreenFlag);
+
+      // 会员番剧剧集: 试看已开播, 后台解析整集, 成功后自动热切换
+      if (isPgcPreview) {
+        unawaited(_resolveFullEpisode());
+      }
     } else {
       _autoPlay.value = false;
       videoState.value = false;
@@ -1000,9 +1010,28 @@ class VideoDetailController extends GetxController
     isQuerying = false;
   }
 
-  /// 点击未解锁画质：经第三方解析服务获取该画质并合并进当前播放数据
+  /// 点击未解锁画质: 番剧试看走整集替换; 其余经解析服务换取该画质并合并
   Future<bool> unlockQuality(int qn) async {
     try {
+      final pgcType = (_actualVideoType ?? videoType) == .pgc;
+      if (pgcType && data.acceptDesc?.contains('试看') == true) {
+        // 会员剧集: 整集替换后按所点画质播放
+        final full = await QualityResolver.resolvePgcReplacement(
+          bvid: bvid,
+          cid: cid.value,
+          epid: epId,
+          seasonId: seasonId,
+          qn: qn,
+          base: data,
+        );
+        if (full == null) return false;
+        if (full.dash?.audio == null) {
+          currentAudioQa = null;
+        }
+        data = full;
+        currentVideoQa.value = _pickQa(full, qn);
+        return true;
+      }
       final envelope = await QualityResolver.resolvePlayUrl(
         videoType: _actualVideoType ?? videoType,
         bvid: bvid,
@@ -1023,6 +1052,47 @@ class VideoDetailController extends GetxController
     } catch (_) {
       return false;
     }
+  }
+
+  /// 从数据中挑选最接近 [qn] 的可用画质(保证存在于 dash; 优先 ≤ qn 的最高档)
+  VideoQuality _pickQa(PlayUrlModel model, int qn) {
+    final codes =
+        model.dash!.video!.map((e) => e.quality.code).toSet().toList()
+          ..sort((a, b) => b.compareTo(a));
+    for (final c in codes) {
+      if (c <= qn) return VideoQuality.fromCode(c);
+    }
+    return VideoQuality.fromCode(codes.first);
+  }
+
+  /// 会员番剧剧集: 后台解析整集, 成功后替换试看数据并热切换
+  /// (以试看已播到的位置续播; 解析期间用户切集则放弃)
+  Future<void> _resolveFullEpisode() async {
+    final targetCid = cid.value;
+    final targetBvid = bvid;
+    try {
+      final full = await QualityResolver.resolvePgcReplacement(
+        bvid: bvid,
+        cid: cid.value,
+        epid: epId,
+        seasonId: seasonId,
+        qn: plPlayerController.cacheVideoQa ?? 80,
+        base: data,
+      );
+      if (full == null || cid.value != targetCid || bvid != targetBvid) {
+        return;
+      }
+      if (full.dash?.audio == null) {
+        currentAudioQa = null;
+      }
+      data = full;
+      currentVideoQa.value = _pickQa(
+        full,
+        plPlayerController.cacheVideoQa ?? 80,
+      );
+      SmartDialog.showToast('整集解析成功，正在切换完整剧集');
+      updatePlayer();
+    } catch (_) {}
   }
 
   late final List<PostSegmentModel> postList = <PostSegmentModel>[];
