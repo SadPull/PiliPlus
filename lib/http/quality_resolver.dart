@@ -12,7 +12,6 @@ import 'package:PiliPlus/models/user/info.dart';
 import 'package:PiliPlus/models/video/play/url.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/accounts/account.dart';
-import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:dio/dio.dart';
@@ -158,17 +157,27 @@ abstract final class QualityResolver {
       Map<String, dynamic>? envelope;
       var reason = '';
       if (videoType == .pgc && !_circuitOpen('bzview3')) {
+        // 番剧: 转发 web 播放器的 ogv/player/playview 请求体(抓包对齐)
         envelope = await _post('bzview3', {
           'iic': false,
           'ui': ui,
           'body': jsonEncode({
-            'avid': bvid != null ? IdUtils.bv2av(bvid) : (avid ?? 0),
-            'cid': cid,
-            'qn': qn,
-            'fnver': 0,
-            'fnval': 4048,
-            'session': '',
-            'ep_id': epid ?? 0,
+            'scene': 'normal',
+            'video_index': {
+              'bvid': null,
+              'cid': cid,
+              'ogv_season_id': seasonId ?? 0,
+              'ogv_episode_id': epid ?? 0,
+            },
+            'video_param': {'qn': qn},
+            'player_param': {
+              'fnver': 0,
+              'fnval': 4048,
+              'drm_tech_type': 2,
+              'version_name': '4.9.93',
+              'app_id': 100,
+            },
+            'exp_info': {'ogv_half_pay': true},
           }),
         });
         if (envelope == null && _circuitOpen('bzview3')) {
@@ -280,9 +289,18 @@ abstract final class QualityResolver {
               ? envelope['data']
               : null;
         case .pgc:
+          // v2 playurl 中继: {code, result: {video_info}}
           final result = envelope['result'];
           if (result is Map && result['video_info'] is Map<String, dynamic>) {
             return result['video_info'];
+          }
+          // ogv playview 中继: {code, data: {video_info}} 或 data 即播放数据
+          final data = envelope['data'];
+          if (data is Map && data['video_info'] is Map<String, dynamic>) {
+            return data['video_info'];
+          }
+          if (data is Map && (data['dash'] != null || data['durl'] != null)) {
+            return data;
           }
           return null;
       }
