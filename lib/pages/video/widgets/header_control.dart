@@ -925,7 +925,7 @@ class HeaderControlState extends State<HeaderControl>
         unlockEnabled &&
         item.quality != null &&
         validQaCodes.contains(item.quality) &&
-        !idSet.contains(item.quality);
+        !availableQa.contains(item.quality);
 
     showBottomSheet(
       (context, setState) {
@@ -972,7 +972,7 @@ class HeaderControlState extends State<HeaderControl>
                           return;
                         }
                         final int quality = item.quality!;
-                        if (!idSet.contains(quality) && canResolve(item)) {
+                        if (!availableQa.contains(quality) && canResolve(item)) {
                           // 按需解析该画质后继续正常切换流程
                           Get.back();
                           SmartDialog.showToast(
