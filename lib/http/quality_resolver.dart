@@ -13,6 +13,7 @@ import 'package:PiliPlus/models/video/play/url.dart';
 import 'package:PiliPlus/utils/accounts.dart';
 import 'package:PiliPlus/utils/accounts/account.dart';
 import 'package:PiliPlus/utils/storage.dart';
+import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -31,6 +32,19 @@ abstract final class QualityResolver {
   static final Map<String, Map<String, dynamic>> _cache = {};
   static DateTime? _quotaTipUntil;
   static final Map<String, DateTime> _circuitOpenUntil = {};
+  static DateTime? _autoUpdateAttemptAt;
+
+  // ---- 常量 ----
+  /// 服务器响应中混淆过的 CDN 域名片段 → 真实片段
+  static const String _mirrorCosObf = 'mirrorcosov';
+  static const String _mirrorCos = 'mirrorcos';
+
+  /// 从脚本文本提取服务器地址：`box={home:"http://host:port",...}`
+  static final RegExp _scriptHomeRe = RegExp(
+    "box\\s*=\\s*\\{\\s*home\\s*:\\s*['\"]([^'\"]+)['\"]",
+  );
+  /// 兜底：脚本头 `// @homepage http://host:port`
+  static final RegExp _scriptHomepageRe = RegExp(r'@homepage\s+(\S+)');
 
   /// 功能开关 + 已登录
   static bool get canUse =>
@@ -110,7 +124,112 @@ abstract final class QualityResolver {
         return true;
       }
     } catch (_) {}
+    // 连接失败：按需从脚本自动提取最新服务器地址后重试一次
+    if (await _autoUpdateHome()) {
+      _circuitOpenUntil.clear();
+      _registeredMid = null;
+      return _ensureRegistered(mid);
+    }
     return false;
+  }
+
+  /// 连接失败时从脚本自动提取新地址（30 分钟冷却）。返回地址是否发生了变化
+  static Future<bool> _autoUpdateHome() async {
+    if (!Pref.enableResolverAutoUpdate) return false;
+    final now = DateTime.now();
+    final last = _autoUpdateAttemptAt;
+    if (last != null && now.isBefore(last.add(const Duration(minutes: 30)))) {
+      return false;
+    }
+    _autoUpdateAttemptAt = now;
+    return await updateHomeFromScript(auto: true) != null;
+  }
+
+  /// 从脚本分发地址抓取脚本文本并提取解析服务器地址
+  ///
+  /// 返回提取到的地址（含连通性校验），失败返回 null：
+  /// - [auto] 为 true（自动模式）：静默执行，仅提取到与当前不同且可达的地址时才保存
+  /// - [auto] 为 false（手动模式）：给出结果 Toast，可达与否都返回提取到的地址但不保存
+  ///   （由调用方决定是否应用）
+  static Future<String?> updateHomeFromScript({bool auto = false}) async {
+    String? failToast(String reason) {
+      if (!auto) SmartDialog.showToast(reason);
+      return null;
+    }
+
+    final scriptUrl = Pref.qualityResolverScriptUrl;
+    String? text;
+    try {
+      final res = await Request().get(
+        scriptUrl,
+        options: Options(
+          responseType: ResponseType.plain,
+          validateStatus: (status) => true,
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 30),
+          // 外部地址，不注入 B 站 Cookie / 账号头
+          extra: {'account': const NoAccount()},
+        ),
+      );
+      if (res.data is String) text = res.data as String;
+    } catch (_) {}
+    if (text == null || text.isEmpty) {
+      return failToast('获取脚本失败：$scriptUrl');
+    }
+
+    String? home;
+    for (final re in [_scriptHomeRe, _scriptHomepageRe]) {
+      final match = re.firstMatch(text);
+      final candidate = match?.group(1);
+      if (candidate != null && _isValidHome(candidate)) {
+        home = _normalizeHome(candidate);
+        break;
+      }
+    }
+    if (home == null) {
+      return failToast('未能从脚本中提取到解析服务器地址');
+    }
+
+    final reachable = await _probeHome(home);
+    if (auto) {
+      if (!reachable) return null;
+      if (home == Pref.qualityResolverHome) return null;
+      GStorage.setting.put(SettingBoxKey.qualityResolverHome, home);
+      SmartDialog.showToast('解析服务器地址已自动更新\n$home');
+      return home;
+    }
+    SmartDialog.showToast(
+      reachable ? '提取成功：$home' : '已提取到 $home\n（当前连通性检查未通过）',
+    );
+    return home;
+  }
+
+  static bool _isValidHome(String home) {
+    final uri = Uri.tryParse(home.trim());
+    return uri != null && (uri.isScheme('http') || uri.isScheme('https'));
+  }
+
+  static String _normalizeHome(String home) {
+    final value = home.trim();
+    return value.endsWith('/') ? value.substring(0, value.length - 1) : value;
+  }
+
+  /// 轻量连通性检查：任意 HTTP 响应（含 4xx/5xx）即视为可达
+  static Future<bool> _probeHome(String home) async {
+    try {
+      final res = await Request().get(
+        home,
+        options: Options(
+          validateStatus: (status) => true,
+          sendTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 10),
+          extra: {'account': const NoAccount()},
+        ),
+      );
+      return res.statusCode != -1;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 经解析服务器换取 [qn] 画质的 playurl 响应信封
@@ -185,20 +304,22 @@ abstract final class QualityResolver {
         }
       }
       if (envelope == null && !_circuitOpen('bzview2')) {
+        // 与脚本一致：先剥离 dm_* 本地行为字段再提交解析
+        final signedUrl = await VideoHttp.buildSignedPlayUrl(
+          videoType: videoType,
+          avid: avid,
+          bvid: bvid,
+          cid: cid,
+          qn: qn,
+          epid: epid,
+          seasonId: seasonId,
+          tryLook: tryLook,
+          language: language,
+          voiceBalance: voiceBalance,
+        );
         envelope = await _post('bzview2', {
           'ui': ui,
-          'url': await VideoHttp.buildSignedPlayUrl(
-            videoType: videoType,
-            avid: avid,
-            bvid: bvid,
-            cid: cid,
-            qn: qn,
-            epid: epid,
-            seasonId: seasonId,
-            tryLook: tryLook,
-            language: language,
-            voiceBalance: voiceBalance,
-          ),
+          'url': signedUrl.replaceAll(RegExp('dm_.+?&'), ''),
         });
         if (envelope == null && reason.isEmpty) {
           reason = _circuitOpen('bzview2')
@@ -245,9 +366,41 @@ abstract final class QualityResolver {
         _circuitOpenUntil[api] = DateTime.now().add(const Duration(minutes: 10));
         return null;
       }
-      return res.data is Map<String, dynamic> ? res.data : null;
+      if (res.data is Map<String, dynamic>) {
+        _restoreMirrorCos(res.data);
+        return res.data;
+      }
+      return null;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// 服务器会把 CDN 域名中的 mirrorcos 混淆成 mirrorcosov，需还原
+  /// （等价于脚本的 JSON 字符串替换，对缓存副本同样生效）
+  static void _restoreMirrorCos(dynamic node) {
+    if (node is Map) {
+      for (final key in node.keys.toList()) {
+        final value = node[key];
+        if (value is String) {
+          if (value.contains(_mirrorCosObf)) {
+            node[key] = value.replaceAll(_mirrorCosObf, _mirrorCos);
+          }
+        } else {
+          _restoreMirrorCos(value);
+        }
+      }
+    } else if (node is List) {
+      for (var i = 0; i < node.length; i++) {
+        final value = node[i];
+        if (value is String) {
+          if (value.contains(_mirrorCosObf)) {
+            node[i] = value.replaceAll(_mirrorCosObf, _mirrorCos);
+          }
+        } else {
+          _restoreMirrorCos(value);
+        }
+      }
     }
   }
 
