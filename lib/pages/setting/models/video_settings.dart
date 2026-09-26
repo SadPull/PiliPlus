@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:PiliPlus/http/quality_resolver.dart';
 import 'package:PiliPlus/models/common/video/audio_quality.dart';
 import 'package:PiliPlus/models/common/video/cdn_type.dart';
 import 'package:PiliPlus/models/common/video/live_quality.dart';
@@ -49,6 +50,13 @@ List<SettingsModel> get videoSettings => [
     leading: const Icon(MdiIcons.server),
     getSubtitle: () => Pref.qualityResolverHome,
     onTap: _showResolverDialog,
+  ),
+  const SwitchModel(
+    title: '自动更新解析地址',
+    subtitle: '解析服务器连接失败时，自动从脚本地址提取最新服务器并更新',
+    leading: Icon(MdiIcons.autorenew),
+    setKey: SettingBoxKey.enableResolverAutoUpdate,
+    defaultVal: true,
   ),
   NormalModel(
     title: 'B站定向流量支持',
@@ -193,18 +201,44 @@ List<SettingsModel> get videoSettings => [
 ];
 
 void _showResolverDialog(BuildContext context, VoidCallback setState) {
-  String home = Pref.qualityResolverHome;
+  final homeController = TextEditingController(text: Pref.qualityResolverHome);
+  final scriptController = TextEditingController(
+    text: Pref.qualityResolverScriptUrl,
+  );
   showDialog(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('解析服务器'),
-      content: TextFormField(
-        autofocus: true,
-        initialValue: home,
-        onChanged: (value) => home = value,
-        decoration: const InputDecoration(hintText: 'http://host:port'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextFormField(
+            controller: homeController,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '服务器地址',
+              hintText: 'http://host:port',
+            ),
+          ),
+          TextFormField(
+            controller: scriptController,
+            decoration: const InputDecoration(
+              labelText: '脚本地址',
+              hintText: '解析脚本分发地址，用于自动提取服务器',
+            ),
+          ),
+        ],
       ),
       actions: [
+        TextButton(
+          onPressed: () async {
+            final home = await QualityResolver.updateHomeFromScript();
+            if (home != null && context.mounted) {
+              homeController.text = home;
+            }
+          },
+          child: const Text('从脚本提取'),
+        ),
         TextButton(
           onPressed: Get.back,
           child: Text(
@@ -214,10 +248,17 @@ void _showResolverDialog(BuildContext context, VoidCallback setState) {
         ),
         TextButton(
           onPressed: () {
-            final val = home.trim();
-            if (val.isEmpty) return;
+            final home = homeController.text.trim();
+            if (home.isEmpty) return;
+            GStorage.setting.put(SettingBoxKey.qualityResolverHome, home);
+            final scriptUrl = scriptController.text.trim();
+            if (scriptUrl.isNotEmpty) {
+              GStorage.setting.put(
+                SettingBoxKey.qualityResolverScriptUrl,
+                scriptUrl,
+              );
+            }
             Get.back();
-            GStorage.setting.put(SettingBoxKey.qualityResolverHome, val);
             setState();
           },
           child: const Text('确定'),

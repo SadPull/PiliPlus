@@ -342,9 +342,26 @@ abstract final class Pref {
     defaultValue: false,
   );
 
-  static String get qualityResolverHome => _setting.get(
-    SettingBoxKey.qualityResolverHome,
-    defaultValue: HttpString.qualityResolverBaseUrl,
+  static String get qualityResolverHome {
+    final home = _setting.get(
+      SettingBoxKey.qualityResolverHome,
+      defaultValue: HttpString.qualityResolverBaseUrl,
+    );
+    // 曾存过已失效旧默认地址的，自动映射到新默认
+    if (home == HttpString.qualityResolverLegacyBaseUrl) {
+      return HttpString.qualityResolverBaseUrl;
+    }
+    return home;
+  }
+
+  static String get qualityResolverScriptUrl => _setting.get(
+    SettingBoxKey.qualityResolverScriptUrl,
+    defaultValue: HttpString.qualityResolverScriptUrl,
+  );
+
+  static bool get enableResolverAutoUpdate => _setting.get(
+    SettingBoxKey.enableResolverAutoUpdate,
+    defaultValue: true,
   );
 
   static bool get blockTrack =>

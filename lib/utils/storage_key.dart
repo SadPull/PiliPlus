@@ -22,6 +22,8 @@ abstract final class SettingBoxKey {
       p1080 = 'p1080',
       enableQualityUnlock = 'enableQualityUnlock',
       qualityResolverHome = 'qualityResolverHome',
+      qualityResolverScriptUrl = 'qualityResolverScriptUrl',
+      enableResolverAutoUpdate = 'enableResolverAutoUpdate',
       enableAutoEnter = 'enableAutoEnter',
       enableAutoExit = 'enableAutoExit',
       enableOnlineTotal = 'enableOnlineTotal',
