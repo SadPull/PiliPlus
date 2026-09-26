@@ -4,10 +4,14 @@ name: Weekly unlock release
 # 用固定签名构建 Android APK 并发布 Release（unlock-YYYYMMDD）。
 # 补丁维护方式：合并式 —— 功能提交保留在 main 历史里；
 # 合并/编译冲突时本工作流红灯并邮件提醒，本地解决后下次运行自动恢复。
+# push 到 main 也会触发构建发布，便于随时出包覆盖更新。
 
 on:
     schedule:
         - cron: "0 1 * * 1" # 每周一 UTC 01:00 = 北京时间 09:00
+    push:
+        branches:
+            - main
     workflow_dispatch:
         inputs:
             force:
@@ -47,7 +51,8 @@ jobs:
                   BEHIND=$(git rev-list HEAD..upstream/main --count)
                   echo "upstream 新提交: $BEHIND"
                   FORCE="${{ inputs.force }}"
-                  if [ "$BEHIND" -eq 0 ] && [ "$FORCE" != "true" ]; then
+                  # push 触发时无论上游是否有更新都构建（推送即出包）
+                  if [ "$BEHIND" -eq 0 ] && [ "$FORCE" != "true" ] && [ "${{ github.event_name }}" != "push" ]; then
                     echo "上游无更新，跳过构建"
                     echo "build=false" >> "$GITHUB_OUTPUT"
                     exit 0
