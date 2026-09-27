@@ -1045,8 +1045,8 @@ class VideoDetailController extends GetxController
     }
 
     PlayUrlModel? responseData;
-    if (result case Success(:final r)) {
-      responseData = r;
+    if (result case Success(:final response)) {
+      responseData = response;
     } else if (_canUnlockLocked && _pgcLockUnlockTried.add(cid.value)) {
       // 大会员专享等整片锁定(B站直接报错、无试看可播): 经解析服务解锁整集
       responseData = await _unlockLockedEpisode();
@@ -1151,7 +1151,7 @@ class VideoDetailController extends GetxController
     if (full.dash?.audio == null) {
       currentAudioQa = null;
     } else {
-      final audioIds = full.dash!.audio!.map((e) => e.id!).toList();
+      final audioIds = full.dash!.audio!.map((e) => e.id).toList();
       int closest = audioIds.findClosestTarget(
         (e) => e <= plPlayerController.cacheAudioQa,
         (a, b) => a > b ? a : b,

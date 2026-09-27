@@ -494,7 +494,7 @@ abstract final class QualityResolver {
       final newAudio = newDash?.audio;
       if (newAudio != null) {
         for (final item in newAudio) {
-          if (item.id != null && knownAudio.add(item.id!)) {
+          if (knownAudio.add(item.id)) {
             (dash.audio ??= []).add(item);
           }
         }
@@ -605,7 +605,7 @@ abstract final class QualityResolver {
     if (!canUse || base.dash?.video == null) return;
     try {
       final knownQn = <int>{
-        for (final item in base.dash!.video!) if (item.id != null) item.id!,
+        for (final item in base.dash!.video!) item.id,
       };
       final validCodes = {for (final qa in VideoQuality.values) qa.code};
       final candidates = <int>{

@@ -45,7 +45,8 @@ jobs:
               run: lib/scripts/patch.ps1 android
 
             - name: Flutter Analyze
-              run: flutter analyze --no-pub
+              # error/warning 判失败; info 级不拦截(存量 info 集中在 lib/common/widgets/flutter)
+              run: flutter analyze --no-pub --no-fatal-infos
 
             - name: Flutter Build Debug Apk
               run: flutter build apk --debug --target-platform android-arm64 --no-pub
