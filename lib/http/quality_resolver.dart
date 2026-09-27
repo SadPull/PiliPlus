@@ -527,9 +527,10 @@ abstract final class QualityResolver {
     }
   }
 
-  /// 番剧解锁:
-  /// - 会员剧集(试看): 经服务器解析整集, 返回完整 PlayUrlModel 用于整体替换试看数据
-  /// - 免费剧集: 仅合并更高画质(原地修改 base, 返回 null)
+  /// PGC 解锁(番剧/电影等):
+  /// - [base] 为试看数据或 null(整片被锁, B站未返回可播数据, 如大会员专享电影):
+  ///   经服务器解析整集, 返回完整 PlayUrlModel 用于替换
+  /// - [base] 为非试看数据(免费剧集): 仅合并更高画质(原地修改 base, 返回 null)
   /// 任何失败 fail-open(返回 null, 保持原有试看/画质不变), 原因经 [onFail] 上报。
   static Future<PlayUrlModel?> resolvePgcReplacement({
     String? bvid,
@@ -537,12 +538,12 @@ abstract final class QualityResolver {
     dynamic epid,
     dynamic seasonId,
     required int qn,
-    required PlayUrlModel base,
+    PlayUrlModel? base,
     void Function(String reason)? onFail,
   }) async {
     if (!canUse) return null;
     try {
-      if (!base.isPreview) {
+      if (base != null && !base.isPreview) {
         await unlockHighest(
           videoType: .pgc,
           bvid: bvid,
@@ -580,8 +581,8 @@ abstract final class QualityResolver {
         onFail?.call('服务器未返回可用视频流');
         return null;
       }
-      // 保留试看阶段的续播进度
-      full.lastPlayTime = base.lastPlayTime;
+      // 保留试看/上次播放的续播进度
+      full.lastPlayTime = base?.lastPlayTime ?? full.lastPlayTime;
       return full;
     } catch (_) {
       return null;

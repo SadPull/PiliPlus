@@ -113,6 +113,10 @@ class VideoDetailController extends GetxController
   // 请求返回的视频信息
   late PlayUrlModel data;
   DateTime? _pgcFailTipUntil;
+  // 整片锁定(大会员专享等)已自动尝试解锁的 cid, 每集仅尝试一次避免重复消耗解析次数
+  final Set<int> _pgcLockUnlockTried = {};
+  // 解析解锁期间用户已切集: 当前查询作废, 结束后重新加载当前集
+  bool _pgcRequeryPending = false;
   final RxBool videoState = false.obs;
 
   /// 播放器配置 画质 音质 解码格式
@@ -837,6 +841,11 @@ class VideoDetailController extends GetxController
       await _queryVideoUrl(fromReset, autoFullScreenFlag);
     } finally {
       isQuerying = false;
+      // 解析解锁期间用户已切集(期间的重载请求被 isQuerying 拦截): 重新加载当前集
+      if (_pgcRequeryPending) {
+        _pgcRequeryPending = false;
+        unawaited(queryVideoUrl());
+      }
     }
   }
 
@@ -859,8 +868,23 @@ class VideoDetailController extends GetxController
 
     final result = await _getVideoUrl(VideoQuality.hdrVivid.code);
 
-    if (result case Success(:final response)) {
+    // 播放数据处理与播放器初始化(B站正常响应与解析解锁的整集数据共用)
+    Future<void> playData(PlayUrlModel response) async {
       data = response;
+
+      // B站返回空数据(整片锁定且无试看流, 如大会员专享电影): 先尝试经解析服务解锁
+      if (_canUnlockLocked &&
+          data.dash == null &&
+          data.durl == null &&
+          _pgcLockUnlockTried.add(cid.value)) {
+        final full = await _unlockLockedEpisode();
+        if (full != null) {
+          data = full;
+        } else if (_pgcRequeryPending) {
+          return;
+        }
+      }
+
       if (data.dash != null) await _supplementVideoQualities();
 
       // 会员番剧剧集(试看)标记, 供 durl 分支与画质钩子使用
@@ -1018,14 +1042,28 @@ class VideoDetailController extends GetxController
       if (isPgcPreview) {
         unawaited(_resolveFullEpisode());
       }
-    } else {
-      _autoPlay.value = false;
-      videoState.value = false;
-      if (plPlayerController.isFullScreen.value) {
-        plPlayerController.triggerFullScreen(status: false);
-      }
-      result.toast();
     }
+
+    PlayUrlModel? responseData;
+    if (result case Success(:final r)) {
+      responseData = r;
+    } else if (_canUnlockLocked && _pgcLockUnlockTried.add(cid.value)) {
+      // 大会员专享等整片锁定(B站直接报错、无试看可播): 经解析服务解锁整集
+      responseData = await _unlockLockedEpisode();
+    }
+    if (responseData == null) {
+      // 解析期间已切集(本次作废): 不做空态处理, 由重载的新集接管
+      if (!_pgcRequeryPending) {
+        _autoPlay.value = false;
+        videoState.value = false;
+        if (plPlayerController.isFullScreen.value) {
+          plPlayerController.triggerFullScreen(status: false);
+        }
+        result.toast();
+      }
+      return;
+    }
+    await playData(responseData);
   }
 
   /// 点击未解锁画质: 番剧试看走整集替换; 其余经解析服务换取该画质并合并
@@ -1098,12 +1136,7 @@ class VideoDetailController extends GetxController
       );
       if (full == null || cid.value != targetCid || bvid != targetBvid) {
         if (failTip.isNotEmpty && cid.value == targetCid) {
-          // 失败原因提示(5 分钟节流, 便于定位服务器侧问题)
-          final now = DateTime.now();
-          if (_pgcFailTipUntil == null || now.isAfter(_pgcFailTipUntil!)) {
-            _pgcFailTipUntil = now.add(const Duration(minutes: 5));
-            SmartDialog.showToast('番剧解析失败：${failTip.first}');
-          }
+          _toastResolveFailOnce(failTip);
         }
         return;
       }
@@ -1134,6 +1167,49 @@ class VideoDetailController extends GetxController
       full,
       plPlayerController.cacheVideoQa ?? 80,
     );
+  }
+
+  /// 整片锁定内容(大会员专享电影等)的自动解锁条件: 复用第三方解析开关 + PGC
+  bool get _canUnlockLocked =>
+      QualityResolver.canUse && (_actualVideoType ?? videoType) == .pgc;
+
+  /// 整片锁定的 PGC(B站未返回可播数据): 经解析服务解析整集
+  /// 成功返回完整数据; 解析期间用户已切集则放弃并安排重载; 失败节流提示原因
+  Future<PlayUrlModel?> _unlockLockedEpisode() async {
+    final targetCid = cid.value;
+    final targetBvid = bvid;
+    final failTip = <String>[];
+    SmartDialog.showToast('正在尝试解析解锁…');
+    try {
+      final full = await QualityResolver.resolvePgcReplacement(
+        bvid: targetBvid,
+        cid: targetCid,
+        epid: epId,
+        seasonId: seasonId,
+        qn: plPlayerController.cacheVideoQa ?? 80,
+        base: null,
+        onFail: failTip.add,
+      );
+      if (full != null && cid.value == targetCid && bvid == targetBvid) {
+        return full;
+      }
+    } catch (_) {}
+    if (cid.value != targetCid || bvid != targetBvid) {
+      // 解析期间已切集: 本次查询作废, 由重载的新集接管
+      _pgcRequeryPending = true;
+      return null;
+    }
+    _toastResolveFailOnce(failTip);
+    return null;
+  }
+
+  /// 解析失败原因提示(5 分钟节流, 便于定位服务器侧问题)
+  void _toastResolveFailOnce(List<String> failTip) {
+    final now = DateTime.now();
+    if (_pgcFailTipUntil == null || now.isAfter(_pgcFailTipUntil!)) {
+      _pgcFailTipUntil = now.add(const Duration(minutes: 5));
+      SmartDialog.showToast('解析失败：${failTip.first}');
+    }
   }
 
   late final List<PostSegmentModel> postList = <PostSegmentModel>[];

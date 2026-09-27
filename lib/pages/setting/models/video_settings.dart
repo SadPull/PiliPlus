@@ -40,7 +40,8 @@ List<SettingsModel> get videoSettings => [
   ),
   const SwitchModel(
     title: '第三方高画质解析',
-    subtitle: '存在会员限定画质时经解析服务获取更高画质选项。会把账号Cookie提交给第三方服务器，存在风险，开启时会再次确认',
+    subtitle:
+        '存在会员限定画质时经解析服务获取更高画质选项；需要大会员观看的番剧、电影等整片锁定内容也会自动尝试解锁。会把账号Cookie提交给第三方服务器，存在风险，开启时会再次确认',
     leading: Icon(Icons.high_quality),
     setKey: SettingBoxKey.enableQualityUnlock,
     defaultVal: false,
