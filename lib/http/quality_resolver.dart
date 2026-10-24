@@ -130,11 +130,13 @@ abstract final class QualityResolver {
   }
 
   /// 会话内对当前账号做一次 bzusta 注册/校验
-  static Future<bool> _ensureRegistered(int mid) async {
-    if (_registeredMid == mid) return true;
+  /// 返回 null 表示成功，否则为失败原因（透传给用户便于区分服务器故障）
+  static Future<String?> _ensureRegistered(int mid) async {
+    if (_registeredMid == mid) return null;
+    String? error;
     try {
       final ui = await buildUi();
-      if (ui == null) return false;
+      if (ui == null) return '获取账号信息失败';
       final res = await Request().post(
         '${Pref.qualityResolverHome}/api/bzusta',
         data: {'ui': ui},
@@ -142,16 +144,21 @@ abstract final class QualityResolver {
       );
       if (res.data is Map && res.data['code'] == 0) {
         _registeredMid = mid;
-        return true;
+        return null;
       }
-    } catch (_) {}
-    // 连接失败：按需从脚本自动提取最新服务器地址后重试一次
-    if (await _autoUpdateHome()) {
+      error = res.data is Map && res.data['message'] is String
+          ? '解析服务器返回：${res.data['message']}'
+          : '解析服务器无有效响应';
+    } catch (_) {
+      error = '连接解析服务器失败';
+    }
+    // 仅连接层失败（超时/不可达）才尝试从脚本提取新地址后重试一次
+    if (error == '连接解析服务器失败' && await _autoUpdateHome()) {
       _circuitOpenUntil.clear();
       _registeredMid = null;
       return _ensureRegistered(mid);
     }
-    return false;
+    return error;
   }
 
   /// 连接失败时从脚本自动提取新地址（30 分钟冷却）。返回地址是否发生了变化
@@ -290,8 +297,9 @@ abstract final class QualityResolver {
     }
 
     try {
-      if (!await _ensureRegistered(account.mid)) {
-        return fail('连接解析服务器失败');
+      final registerError = await _ensureRegistered(account.mid);
+      if (registerError != null) {
+        return fail(registerError);
       }
       final ui = await buildUi();
       if (ui == null) return fail('获取账号信息失败');
