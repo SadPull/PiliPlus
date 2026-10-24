@@ -197,7 +197,9 @@ class AudioController extends GetxController
     videoPlayerServiceHandler
       ?..onPlay = onPlay
       ..onPause = onPause
-      ..onSeek = onSeek;
+      ..onSeek = onSeek
+      ..onSkipToNext = playNext
+      ..onSkipToPrevious = playPrev;
 
     animController = AnimationController(
       vsync: this,
@@ -337,10 +339,7 @@ class AudioController extends GetxController
           return;
         }
         position.value = 0;
-        final audio = audios.findClosestTarget(
-          (e) => e.id <= cacheAudioQa,
-          (a, b) => a.id > b.id ? a : b,
-        );
+        final audio = audios.findTargetMedia((e) => e.id, cacheAudioQa);
         _onOpenMedia(VideoUtils.getCdnUrl(audio.playUrls), volume: volume);
       } else if (playInfo.hasPlayUrl()) {
         final playUrl = playInfo.playUrl;
@@ -828,6 +827,8 @@ class AudioController extends GetxController
       ?..onPlay = null
       ..onPause = null
       ..onSeek = null
+      ..onSkipToNext = null
+      ..onSkipToPrevious = null
       ..onVideoDetailDispose(hashCode.toString())
       ..clearIfNeeded();
     _subscriptions?.forEach((e) => e.cancel());
