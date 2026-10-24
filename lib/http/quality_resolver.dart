@@ -94,8 +94,6 @@ abstract final class QualityResolver {
       'money': money != null && money >= 1 ? money.toInt() : 0,
       'cookie': cookies.entries.map((e) => '${e.key}=${e.value}').join('; '),
       'csrf': cookies['bili_jct'],
-      'face': user.face,
-      'name': user.uname,
     };
   }
 
@@ -307,8 +305,9 @@ abstract final class QualityResolver {
       Map<String, dynamic>? envelope;
       var reason = '';
       if (videoType == .pgc && !_circuitOpen('bzview3')) {
-        // 番剧: 转发 web 播放器的 ogv/player/playview 请求(抓包对齐);
-        // v0.0.6 协议要求同时携带签名后的完整请求地址
+        // 番剧: 转发 web 播放器的 ogv/player/playview 请求;
+        // 请求体与当前 web 播放器(即上游 ogv 迁移后的 videoUrl)保持一致,
+        // 服务器原样代为转发, 过期格式会被 B 站拒绝
         envelope = await _post('bzview3', {
           'iic': false,
           'url': await _buildOgvPlayViewUrl(ui['csrf'] as String?),
@@ -317,19 +316,17 @@ abstract final class QualityResolver {
             'scene': 'normal',
             'video_index': {
               'bvid': null,
-              'cid': cid,
-              'ogv_season_id': seasonId ?? 0,
-              'ogv_episode_id': epid ?? 0,
+              'cid': null,
+              'ogv_season_id': seasonId,
+              'ogv_episode_id': epid,
             },
             'video_param': {'qn': qn},
             'player_param': {
               'fnver': 0,
               'fnval': 4048,
-              'drm_tech_type': 2,
-              'version_name': '4.9.93',
+              'drm_tech_type': 0,
               'app_id': 100,
             },
-            'exp_info': {'ogv_half_pay': true},
           }),
         });
         if (envelope == null && _circuitOpen('bzview3')) {
