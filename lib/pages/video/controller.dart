@@ -1146,19 +1146,22 @@ class VideoDetailController extends GetxController
 
   /// 应用解析出的完整剧集数据(替换试看)并重选音画质
   void _applyFullEpisode(PlayUrlModel full) {
-    if (full.dash?.audio == null) {
+    final audioList = full.dash?.audio;
+    if (audioList == null || audioList.isEmpty) {
       currentAudioQa = null;
     } else {
-      final audioIds = full.dash!.audio!.map((e) => e.id).toList();
-      int closest = audioIds.findClosestTarget(
-        (e) => e <= plPlayerController.cacheAudioQa,
-        (a, b) => a > b ? a : b,
-      );
-      if (!audioIds.contains(plPlayerController.cacheAudioQa) &&
-          audioIds.any((e) => e > plPlayerController.cacheAudioQa)) {
-        closest = AudioQuality.k192.code;
+      final prefer = plPlayerController.cacheAudioQa;
+      final ids = audioList.map((e) => e.id).toSet();
+      if (ids.contains(prefer)) {
+        currentAudioQa = AudioQuality.fromCode(prefer);
+      } else if (ids.any((e) => e > prefer)) {
+        // 偏好音质档不可用且仅剩更高档: 退回192K, 避免自动升高码率
+        currentAudioQa = AudioQuality.k192;
+      } else {
+        currentAudioQa = AudioQuality.fromCode(
+          VideoUtils.findTargetAudio(audioList, prefer).id,
+        );
       }
-      currentAudioQa = AudioQuality.fromCode(closest);
     }
     data = full;
     currentVideoQa.value = _pickQa(
