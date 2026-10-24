@@ -886,6 +886,20 @@ class VideoDetailController extends GetxController
 
     final result = await _getVideoUrl(VideoQuality.hdrVivid.code);
 
+    // TODO(diag): 解锁链路排查用临时诊断, 定位完成后移除
+    if (Pref.enableQualityUnlock && !fromReset) {
+      final msg = switch (result) {
+        Error(:final errMsg) => 'err:$errMsg',
+        Success() => 'ok',
+        _ => result.runtimeType.toString(),
+      };
+      SmartDialog.showToast(
+        '诊断: $msg | canUse:${QualityResolver.canUse} | '
+        'type:${_actualVideoType ?? videoType}',
+        displayTime: const Duration(seconds: 5),
+      );
+    }
+
     // 播放数据处理与播放器初始化(B站正常响应与解析解锁的整集数据共用)
     Future<void> playData(PlayUrlModel response) async {
       data = response;

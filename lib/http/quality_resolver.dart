@@ -65,6 +65,8 @@ abstract final class QualityResolver {
   static Options get _options => Options(
     contentType: Headers.jsonContentType,
     validateStatus: (status) => true,
+    // 脚本经 GM_xmlhttpRequest 携带浏览器 UA 发请求, 对齐以免被服务端防护拦截
+    headers: {'User-Agent': BrowserUa.pc},
     // 解析服务器处理较慢(实测 >20s)，覆盖全局 10s 超时
     sendTimeout: const Duration(seconds: 20),
     receiveTimeout: const Duration(seconds: 90),
