@@ -306,6 +306,8 @@ abstract final class VideoHttp {
             final videoInfo = result['video_info'];
             if (videoInfo != null) {
               data = PlayUrlModel.fromJson(videoInfo);
+              // ogv 协议的试看标记在外层 play_video_type, video_info 内无 is_preview
+              data.isPreview = result['play_video_type'] == 'preview';
               final progress = result['watch_progress'];
               if (progress != null) {
                 data.lastPlayTime =

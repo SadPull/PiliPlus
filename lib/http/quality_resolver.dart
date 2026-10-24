@@ -602,7 +602,13 @@ abstract final class QualityResolver {
       final payload = _payloadOf(.pgc, envelope);
       if (payload == null) return null;
       // 服务器仍返回试看数据则替换无意义
-      if (payload['is_preview'] == 1 || payload['is_preview'] == true) {
+      //（ogv 中继的试看标记在外层 data.play_video_type, 与 v2 的 is_preview 兼容）
+      final relayData = envelope['data'];
+      final stillPreview =
+          payload['is_preview'] == 1 ||
+          payload['is_preview'] == true ||
+          (relayData is Map && relayData['play_video_type'] == 'preview');
+      if (stillPreview) {
         onFail?.call('服务器未返回完整剧集');
         return null;
       }
