@@ -664,7 +664,7 @@ abstract final class QualityResolver {
         voiceBalance: voiceBalance,
         qn: highest,
         silent: true,
-      ).timeout(const Duration(seconds: 8), onTimeout: () => null);
+      ).timeout(const Duration(seconds: 20), onTimeout: () => null);
       if (envelope != null) {
         mergeInto(base, envelope, videoType);
       }
