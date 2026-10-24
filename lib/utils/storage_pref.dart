@@ -347,7 +347,7 @@ abstract final class Pref {
       defaultValue: HttpString.qualityResolverBaseUrl,
     );
     // 曾存过已失效旧默认地址的，自动映射到新默认
-    if (home == HttpString.qualityResolverLegacyBaseUrl) {
+    if (HttpString.qualityResolverLegacyBaseUrls.contains(home)) {
       return HttpString.qualityResolverBaseUrl;
     }
     return home;

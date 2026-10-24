@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math' show max;
 
 import 'package:PiliPlus/http/browser_ua.dart';
+import 'package:PiliPlus/http/constants.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/user.dart';
@@ -15,6 +16,7 @@ import 'package:PiliPlus/utils/accounts/account.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
+import 'package:PiliPlus/utils/wbi_sign.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 
@@ -108,6 +110,25 @@ abstract final class QualityResolver {
     return null;
   }
 
+  /// 组装 wbi 签名的 ogv/player/playview 完整地址
+  /// （与 web 播放器请求一致，v0.0.6 协议经 bzview3 的 url 字段转发给服务器）
+  static Future<String> _buildOgvPlayViewUrl(String? csrf) async {
+    final params = await WbiSign.makSign({
+      'x-bili-locale-json':
+          '{"c_locale":{"language":"zh-Hans"},"always_translate":false}',
+      'x-bili-device-req-json':
+          '{"platform":"web","device":"pc","spmid":"666.25","mobi_app":"web_cn"}',
+      if (csrf != null && csrf.isNotEmpty) 'csrf': csrf,
+    });
+    final query = params.entries
+        .map(
+          (e) =>
+              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent('${e.value}')}',
+        )
+        .join('&');
+    return '${HttpString.apiBaseUrl}/ogv/player/playview?$query';
+  }
+
   /// 会话内对当前账号做一次 bzusta 注册/校验
   static Future<bool> _ensureRegistered(int mid) async {
     if (_registeredMid == mid) return true;
@@ -165,6 +186,8 @@ abstract final class QualityResolver {
         options: Options(
           responseType: ResponseType.plain,
           validateStatus: (status) => true,
+          // 脚本所在的免费空间会拦截非浏览器 UA（dio 默认 UA 会被拒）
+          headers: {'User-Agent': BrowserUa.pc},
           sendTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 30),
           // 外部地址，不注入 B 站 Cookie / 账号头
@@ -276,9 +299,11 @@ abstract final class QualityResolver {
       Map<String, dynamic>? envelope;
       var reason = '';
       if (videoType == .pgc && !_circuitOpen('bzview3')) {
-        // 番剧: 转发 web 播放器的 ogv/player/playview 请求体(抓包对齐)
+        // 番剧: 转发 web 播放器的 ogv/player/playview 请求(抓包对齐);
+        // v0.0.6 协议要求同时携带签名后的完整请求地址
         envelope = await _post('bzview3', {
           'iic': false,
+          'url': await _buildOgvPlayViewUrl(ui['csrf'] as String?),
           'ui': ui,
           'body': jsonEncode({
             'scene': 'normal',

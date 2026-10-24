@@ -407,7 +407,14 @@ abstract final class VideoHttp {
               '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent('${e.value}')}',
         )
         .join('&');
-    return '${HttpString.apiBaseUrl}${videoType.api}?$query';
+    // bzview2 通道按 playurl GET 语义代为请求：固定使用经典 playurl 端点
+    //（ogv 迁移后 videoType.api 对 pgc/pugv 已是 POST 的 playview 地址，不适用）
+    final playUrlApi = switch (videoType) {
+      .ugc => Api.ugcUrl,
+      .pgc => Api.pgcUrl,
+      .pugv => Api.pugvUrl,
+    };
+    return '${HttpString.apiBaseUrl}$playUrlApi?$query';
   }
 
   static String _parseVideoErr(int? code, String? msg) {
