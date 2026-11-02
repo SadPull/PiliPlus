@@ -127,7 +127,7 @@ abstract final class PiliScheme {
               bool isEp = path.contains('/ep/');
               PageUtils.viewPgc(
                 seasonId: isEp ? null : id,
-                epId: isEp ? id : null,
+                epId: isEp ? .parse(id) : null,
                 progress: _videoProgress(uri.queryParameters),
               );
               return true;
@@ -852,14 +852,29 @@ abstract final class PiliScheme {
         }
         launchURL();
         return false;
-      case 'bubble':
+      case 'bubble' || 'tribee':
         // https://www.bilibili.com/bubble/home/1
+        // https://www.bilibili.com/tribee/home/1
         final id = uriDigitRegExp.firstMatch(path)?.group(1);
         if (id != null) {
           Get.toNamed('/bubble', arguments: {'id': id});
           return true;
         }
         launchURL();
+        return false;
+      case 'vote':
+        // www.bilibili.com/h5/vote?vote_id=***&dynamic_id=***
+        final queryParameters = uri.queryParameters;
+        final voteId = parseIntOrNull(queryParameters['vote_id']);
+        final dynamicId = queryParameters['dynamic_id'];
+        if (voteId != null) {
+          showVoteDialog(
+            Get.context!,
+            voteId,
+            dynamicId: parseIntOrNull(dynamicId),
+          );
+          return true;
+        }
         return false;
       default:
         final res = IdUtils.matchAvorBv(input: area?.split('?').first);
