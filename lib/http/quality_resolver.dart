@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math' show max;
 
 import 'package:PiliPlus/http/browser_ua.dart';
-import 'package:PiliPlus/http/constants.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/http/user.dart';
@@ -16,7 +15,6 @@ import 'package:PiliPlus/utils/accounts/account.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
-import 'package:PiliPlus/utils/wbi_sign.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 
@@ -111,25 +109,6 @@ abstract final class QualityResolver {
       }
     } catch (_) {}
     return null;
-  }
-
-  /// 组装 wbi 签名的 ogv/player/playview 完整地址
-  /// （与 web 播放器请求一致，经 bzview3 的 url 字段转发给服务器）
-  static Future<String> _buildOgvPlayViewUrl(String? csrf) async {
-    final params = await WbiSign.makSign({
-      'x-bili-locale-json':
-          '{"c_locale":{"language":"zh-Hans"},"always_translate":false}',
-      'x-bili-device-req-json':
-          '{"platform":"web","device":"pc","spmid":"666.25","mobi_app":"web_cn"}',
-      if (csrf != null && csrf.isNotEmpty) 'csrf': csrf,
-    });
-    final query = params.entries
-        .map(
-          (e) =>
-              '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent('${e.value}')}',
-        )
-        .join('&');
-    return '${HttpString.apiBaseUrl}/ogv/player/playview?$query';
   }
 
   /// 会话内对当前账号做一次 bzusta 注册/校验
@@ -286,6 +265,7 @@ abstract final class QualityResolver {
     bool voiceBalance = false,
     required int qn,
     bool silent = false,
+    bool iic = false,
     void Function(String reason)? onFail,
   }) async {
     final account = _loginAccount;
@@ -310,15 +290,26 @@ abstract final class QualityResolver {
       Map<String, dynamic>? envelope;
       var reason = '';
       if (videoType == .pgc && !_circuitOpen('bzview3')) {
-        // 番剧: 转发 web 播放器的 ogv/player/playview 请求;
-        // 请求体与当前 web 播放器(即上游 ogv 迁移后的 videoUrl)保持一致,
-        // 服务器原样代为转发, 过期格式会被 B 站拒绝
+        // 番剧: 转发 ogv/player/playview 请求; url 与 videoUrl 实际播放请求
+        // 完全一致(GET 语义全量签名 query), 服务器转发后 B 站一定接受;
+        // body 与当前 web 播放器格式一致
         envelope = await _post('bzview3', {
           // 脚本以原 playview 响应是否含 AreaLimitPanel(地区限制) 置位;
-          // PiliPlus 侧地区限制/整片锁定内容走 base:null 的整集解析路径,
-          // 服务器对常规画质解锁不需要该标记, 保持 false
-          'iic': false,
-          'url': await _buildOgvPlayViewUrl(ui['csrf'] as String?),
+          // B 站对地区限制/整片锁定内容直接报错(对应 base:null 的整集解析
+          // 路径), 需要服务器走其区域代理解锁, 此时置 true
+          'iic': iic,
+          'url': await VideoHttp.buildSignedPlayViewUrl(
+            videoType: videoType,
+            avid: avid,
+            bvid: bvid,
+            cid: cid,
+            qn: qn,
+            epid: epid,
+            seasonId: seasonId,
+            tryLook: tryLook,
+            language: language,
+            voiceBalance: voiceBalance,
+          ),
           'ui': ui,
           'body': jsonEncode({
             'scene': 'normal',
@@ -337,7 +328,18 @@ abstract final class QualityResolver {
             },
           }),
         });
-        if (envelope == null && _circuitOpen('bzview3')) {
+        if (envelope != null && envelope['code'] != 0) {
+          if (envelope['code'] == 9) {
+            _toastQuota();
+            return fail('今日免费使用次数已达上限');
+          }
+          // 记录 bzview3 失败原因, 继续走 bzview2 兜底
+          final message = envelope['message'];
+          reason = message is String && message.isNotEmpty
+              ? 'bzview3: $message'
+              : 'bzview3: code=${envelope['code']}';
+          envelope = null;
+        } else if (envelope == null && _circuitOpen('bzview3')) {
           reason = '解析服务器无响应';
         }
       }
@@ -380,7 +382,9 @@ abstract final class QualityResolver {
         default:
           final message = envelope['message'];
           return fail(
-            message is String && message.isNotEmpty ? message : '解析失败',
+            message is String && message.isNotEmpty
+                ? message
+                : '解析失败(code=${envelope['code']})',
           );
       }
     } catch (_) {
@@ -602,11 +606,16 @@ abstract final class QualityResolver {
         tryLook: false,
         qn: qn,
         silent: true,
+        // 整片锁定(B 站直接报错, base 为 null)时需要服务器走区域代理
+        iic: base == null,
         onFail: onFail,
       );
       if (envelope == null) return null;
       final payload = _payloadOf(.pgc, envelope);
-      if (payload == null) return null;
+      if (payload == null) {
+        onFail?.call('响应中无播放数据');
+        return null;
+      }
       // 服务器仍返回试看数据则替换无意义
       //（ogv 中继的试看标记在外层 data.play_video_type, 与 v2 的 is_preview 兼容）
       final relayData = envelope['data'];
