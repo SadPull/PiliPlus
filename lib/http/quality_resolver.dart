@@ -288,11 +288,11 @@ abstract final class QualityResolver {
       if (ui == null) return fail('获取账号信息失败');
 
       Map<String, dynamic>? envelope;
-      var reason = '';
+      var bzview3Error = '';
       if (videoType == .pgc && !_circuitOpen('bzview3')) {
-        // 番剧: 转发 ogv/player/playview 请求; url 与 videoUrl 实际播放请求
-        // 完全一致(GET 语义全量签名 query), 服务器转发后 B 站一定接受;
-        // body 与当前 web 播放器格式一致
+        // 番剧: 转发 ogv/player/playview 请求; url 在实际播放参数基础上补齐
+        // web 播放器特有的 x-bili-* 参数(GET 语义全量签名 query), body 与
+        // 当前 web 播放器格式一致
         envelope = await _post('bzview3', {
           // 脚本以原 playview 响应是否含 AreaLimitPanel(地区限制) 置位;
           // B 站对地区限制/整片锁定内容直接报错(对应 base:null 的整集解析
@@ -334,15 +334,13 @@ abstract final class QualityResolver {
             return fail('今日免费使用次数已达上限');
           }
           // 记录 bzview3 失败原因, 继续走 bzview2 兜底
-          final message = envelope['message'];
-          reason = message is String && message.isNotEmpty
-              ? 'bzview3: $message'
-              : 'bzview3: code=${envelope['code']}';
+          bzview3Error = _envelopeError(envelope);
           envelope = null;
         } else if (envelope == null && _circuitOpen('bzview3')) {
-          reason = '解析服务器无响应';
+          bzview3Error = '无响应';
         }
       }
+      var bzview2Error = '';
       if (envelope == null && !_circuitOpen('bzview2')) {
         // 与脚本一致：先剥离 dm_* 本地行为字段再提交解析
         final signedUrl = await VideoHttp.buildSignedPlayUrl(
@@ -361,14 +359,23 @@ abstract final class QualityResolver {
           'ui': ui,
           'url': signedUrl.replaceAll(RegExp('dm_.+?&'), ''),
         });
-        if (envelope == null && reason.isEmpty) {
-          reason = _circuitOpen('bzview2')
-              ? '解析服务器无响应'
-              : '解析服务器响应异常';
+        if (envelope != null && envelope['code'] != 0) {
+          if (envelope['code'] == 9) {
+            _toastQuota();
+            return fail('今日免费使用次数已达上限');
+          }
+          bzview2Error = _envelopeError(envelope);
+          envelope = null;
+        } else if (envelope == null) {
+          bzview2Error = _circuitOpen('bzview2') ? '无响应' : '响应异常';
         }
       }
       if (envelope == null) {
-        return fail(reason.isEmpty ? '解析失败' : reason);
+        final parts = [
+          if (bzview3Error.isNotEmpty) 'bzview3: $bzview3Error',
+          if (bzview2Error.isNotEmpty) 'bzview2: $bzview2Error',
+        ];
+        return fail(parts.isEmpty ? '解析失败' : parts.join('；'));
       }
 
       switch (envelope['code']) {
@@ -377,19 +384,20 @@ abstract final class QualityResolver {
         case 9:
           _toastQuota();
           return fail('今日免费使用次数已达上限');
-        case 1:
-          return fail('连接解析服务器失败');
         default:
-          final message = envelope['message'];
-          return fail(
-            message is String && message.isNotEmpty
-                ? message
-                : '解析失败(code=${envelope['code']})',
-          );
+          return fail(_envelopeError(envelope));
       }
     } catch (_) {
       return fail('解析异常');
     }
+  }
+
+  /// 信封错误原因: 优先服务器 message, 补充 code 便于定位
+  static String _envelopeError(Map<String, dynamic> envelope) {
+    final message = envelope['message'];
+    return message is String && message.isNotEmpty
+        ? '$message(code=${envelope['code']})'
+        : 'code=${envelope['code']}';
   }
 
   /// 向解析服务器的 /api/[api] 发送 POST，返回信封 JSON；连接层失败触发该接口熔断

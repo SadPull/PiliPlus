@@ -249,18 +249,20 @@ abstract final class VideoHttp {
     bool voiceBalance = false,
     bool fallback = false,
   }) async {
-    final params = await _playViewParams(
-      avid: avid,
-      bvid: bvid,
-      cid: cid,
-      qn: qn,
-      epid: epid,
-      seasonId: seasonId,
-      tryLook: tryLook,
-      videoType: videoType,
-      language: language,
-      voiceBalance: voiceBalance,
-      fallback: fallback,
+    final params = await WbiSign.makSign(
+      _playViewParams(
+        avid: avid,
+        bvid: bvid,
+        cid: cid,
+        qn: qn,
+        epid: epid,
+        seasonId: seasonId,
+        tryLook: tryLook,
+        videoType: videoType,
+        language: language,
+        voiceBalance: voiceBalance,
+        fallback: fallback,
+      ),
     );
 
     try {
@@ -385,9 +387,9 @@ abstract final class VideoHttp {
     });
   }
 
-  /// ogv playview（videoType.api）请求参数。videoUrl 与解锁链路（bzview3 转发）
-  /// 共用，保证转发格式与 app 实际播放请求一致
-  static Future<Map<String, dynamic>> _playViewParams({
+  /// ogv playview（videoType.api）请求参数（wbi 签名前）。videoUrl 与解锁链路
+  /// （bzview3 转发）共用，保证转发参数与 app 实际播放请求一致
+  static Map<String, Object> _playViewParams({
     int? avid,
     String? bvid,
     required int cid,
@@ -399,10 +401,10 @@ abstract final class VideoHttp {
     String? language,
     bool voiceBalance = false,
     bool fallback = false,
-  }) async {
+  }) {
     final dmImgStr = Utils.base64EncodeRandomString(16, 64);
     final dmCoverImgStr = Utils.base64EncodeRandomString(32, 128);
-    return WbiSign.makSign({
+    return {
       'avid': ?avid,
       'bvid': ?bvid,
       'ep_id': ?epid,
@@ -431,12 +433,13 @@ abstract final class VideoHttp {
       'dm_cover_img_str': dmCoverImgStr,
       'dm_img_inter': '{"ds":[],"wh":[0,0,0],"of":[0,0,0]}',
       'cur_language': ?language,
-    });
+    };
   }
 
   /// 组装完整签名的 playview 请求地址（videoType.api，GET 语义全量 query），
-  /// 供第三方解析服务（bzview3）代为请求；参数与 videoUrl 实际播放一致，
-  /// 服务器转发后 B 站一定接受
+  /// 供第三方解析服务（bzview3）代为请求。参数在 videoUrl 实际播放请求的
+  /// 基础上补齐 web 播放器 playview 特有的 x-bili-* 参数（油猴脚本转发的
+  /// 浏览器请求即此形状），一并 wbi 签名
   static Future<String> buildSignedPlayViewUrl({
     int? avid,
     String? bvid,
@@ -449,17 +452,23 @@ abstract final class VideoHttp {
     String? language,
     bool voiceBalance = false,
   }) async {
-    final params = await _playViewParams(
-      avid: avid,
-      bvid: bvid,
-      cid: cid,
-      qn: qn,
-      epid: epid,
-      seasonId: seasonId,
-      tryLook: tryLook,
-      videoType: videoType,
-      language: language,
-      voiceBalance: voiceBalance,
+    final params = await WbiSign.makSign(
+      _playViewParams(
+        avid: avid,
+        bvid: bvid,
+        cid: cid,
+        qn: qn,
+        epid: epid,
+        seasonId: seasonId,
+        tryLook: tryLook,
+        videoType: videoType,
+        language: language,
+        voiceBalance: voiceBalance,
+      )
+        ..['x-bili-locale-json'] =
+            '{"c_locale":{"language":"zh-Hans"},"always_translate":false}'
+        ..['x-bili-device-req-json'] =
+            '{"platform":"web","device":"pc","spmid":"666.25","mobi_app":"web_cn"}',
     );
     final query = params.entries
         .map(
