@@ -436,40 +436,39 @@ abstract final class VideoHttp {
     };
   }
 
-  /// 组装完整签名的 playview 请求地址（videoType.api，GET 语义全量 query），
-  /// 供第三方解析服务（bzview3）代为请求。参数在 videoUrl 实际播放请求的
-  /// 基础上补齐 web 播放器 playview 特有的 x-bili-* 参数（油猴脚本转发的
-  /// 浏览器请求即此形状），一并 wbi 签名
+  /// 组装与当前 web 播放器完全一致的 ogv/player/playview 请求地址（GET，
+  /// 全部参数在 query，wbi 签名），供第三方解析服务（bzview3）代为请求。
+  ///
+  /// 参数集按浏览器实抓对齐（2026-11-08），与 videoUrl 的播放参数有意不同：
+  /// 浏览器无 fourk/voice_balance/gaia_source/isGaiaAvoided/dm_*/avid/bvid，
+  /// 且 drm_tech_type=2、web_location=666.25、多 version_name；
+  /// playview 为 GET 无请求体，转发时不带 body 字段
   static Future<String> buildSignedPlayViewUrl({
-    int? avid,
-    String? bvid,
-    required int cid,
-    required int qn,
+    required VideoType videoType,
     dynamic epid,
     dynamic seasonId,
-    required bool tryLook,
-    required VideoType videoType,
-    String? language,
-    bool voiceBalance = false,
+    required int cid,
+    required int qn,
   }) async {
-    final params = await WbiSign.makSign(
-      _playViewParams(
-        avid: avid,
-        bvid: bvid,
-        cid: cid,
-        qn: qn,
-        epid: epid,
-        seasonId: seasonId,
-        tryLook: tryLook,
-        videoType: videoType,
-        language: language,
-        voiceBalance: voiceBalance,
-      )
-        ..['x-bili-locale-json'] =
-            '{"c_locale":{"language":"zh-Hans"},"always_translate":false}'
-        ..['x-bili-device-req-json'] =
-            '{"platform":"web","device":"pc","spmid":"666.25","mobi_app":"web_cn"}',
-    );
+    final params = await WbiSign.makSign({
+      'x-bili-locale-json':
+          '{"c_locale":{"language":"zh-Hans"},"always_translate":false}',
+      'biz_type': ?videoType.bizType,
+      'scene': 'normal',
+      'from_client': 'BROWSER',
+      'ep_id': ?epid,
+      'season_id': ?seasonId,
+      'cid': cid,
+      'qn': qn,
+      'fnver': 0,
+      'fnval': 4048,
+      'drm_tech_type': 2,
+      'version_name': '4.10.10',
+      'app_id': 100,
+      'web_location': '666.25',
+      'x-bili-device-req-json':
+          '{"platform":"web","device":"pc","spmid":"666.25","mobi_app":"web_cn"}',
+    });
     final query = params.entries
         .map(
           (e) =>

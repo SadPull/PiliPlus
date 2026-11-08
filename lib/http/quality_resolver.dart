@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:math' show max;
 
 import 'package:PiliPlus/http/browser_ua.dart';
@@ -290,9 +289,9 @@ abstract final class QualityResolver {
       Map<String, dynamic>? envelope;
       var bzview3Error = '';
       if (videoType == .pgc && !_circuitOpen('bzview3')) {
-        // 番剧: 转发 ogv/player/playview 请求; url 在实际播放参数基础上补齐
-        // web 播放器特有的 x-bili-* 参数(GET 语义全量签名 query), body 与
-        // 当前 web 播放器格式一致
+        // 番剧: 转发 ogv/player/playview 请求; url 与当前 web 播放器实抓
+        // 请求逐参数一致(GET, 全部参数在 query, wbi 签名), 无请求体,
+        // 与油猴脚本转发的浏览器请求形状相同
         envelope = await _post('bzview3', {
           // 脚本以原 playview 响应是否含 AreaLimitPanel(地区限制) 置位;
           // B 站对地区限制/整片锁定内容直接报错(对应 base:null 的整集解析
@@ -300,33 +299,12 @@ abstract final class QualityResolver {
           'iic': iic,
           'url': await VideoHttp.buildSignedPlayViewUrl(
             videoType: videoType,
-            avid: avid,
-            bvid: bvid,
-            cid: cid,
-            qn: qn,
             epid: epid,
             seasonId: seasonId,
-            tryLook: tryLook,
-            language: language,
-            voiceBalance: voiceBalance,
+            cid: cid,
+            qn: qn,
           ),
           'ui': ui,
-          'body': jsonEncode({
-            'scene': 'normal',
-            'video_index': {
-              'bvid': null,
-              'cid': null,
-              'ogv_season_id': seasonId,
-              'ogv_episode_id': epid,
-            },
-            'video_param': {'qn': qn},
-            'player_param': {
-              'fnver': 0,
-              'fnval': 4048,
-              'drm_tech_type': 0,
-              'app_id': 100,
-            },
-          }),
         });
         if (envelope != null && envelope['code'] != 0) {
           if (envelope['code'] == 9) {
