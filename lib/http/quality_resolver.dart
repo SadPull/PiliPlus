@@ -96,6 +96,9 @@ abstract final class QualityResolver {
       'money': money != null && money >= 1 ? money.toInt() : 0,
       'cookie': cookies.entries.map((e) => '${e.key}=${e.value}').join('; '),
       'csrf': cookies['bili_jct'],
+      // 脚本 v0.0.7 起 ui 新增昵称/头像字段
+      'name': user.uname,
+      'face': user.face,
     };
   }
 
@@ -111,7 +114,7 @@ abstract final class QualityResolver {
   }
 
   /// 组装 wbi 签名的 ogv/player/playview 完整地址
-  /// （与 web 播放器请求一致，v0.0.6 协议经 bzview3 的 url 字段转发给服务器）
+  /// （与 web 播放器请求一致，经 bzview3 的 url 字段转发给服务器）
   static Future<String> _buildOgvPlayViewUrl(String? csrf) async {
     final params = await WbiSign.makSign({
       'x-bili-locale-json':
@@ -193,7 +196,7 @@ abstract final class QualityResolver {
         options: Options(
           responseType: ResponseType.plain,
           validateStatus: (status) => true,
-          // 脚本所在的免费空间会拦截非浏览器 UA（dio 默认 UA 会被拒）
+          // 分发地址可能拦截非浏览器 UA（dio 默认 UA 曾被旧空间拒绝）
           headers: {'User-Agent': BrowserUa.pc},
           sendTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 30),
@@ -311,6 +314,9 @@ abstract final class QualityResolver {
         // 请求体与当前 web 播放器(即上游 ogv 迁移后的 videoUrl)保持一致,
         // 服务器原样代为转发, 过期格式会被 B 站拒绝
         envelope = await _post('bzview3', {
+          // 脚本以原 playview 响应是否含 AreaLimitPanel(地区限制) 置位;
+          // PiliPlus 侧地区限制/整片锁定内容走 base:null 的整集解析路径,
+          // 服务器对常规画质解锁不需要该标记, 保持 false
           'iic': false,
           'url': await _buildOgvPlayViewUrl(ui['csrf'] as String?),
           'ui': ui,

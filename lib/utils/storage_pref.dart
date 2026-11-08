@@ -368,10 +368,17 @@ abstract final class Pref {
     return home;
   }
 
-  static String get qualityResolverScriptUrl => _setting.get(
-    SettingBoxKey.qualityResolverScriptUrl,
-    defaultValue: HttpString.qualityResolverScriptUrl,
-  );
+  static String get qualityResolverScriptUrl {
+    final url = _setting.get(
+      SettingBoxKey.qualityResolverScriptUrl,
+      defaultValue: HttpString.qualityResolverScriptUrl,
+    );
+    // 曾存过已失效旧分发地址的，自动映射到新默认
+    if (HttpString.qualityResolverLegacyScriptUrls.contains(url)) {
+      return HttpString.qualityResolverScriptUrl;
+    }
+    return url;
+  }
 
   static bool get enableResolverAutoUpdate => _setting.get(
     SettingBoxKey.enableResolverAutoUpdate,

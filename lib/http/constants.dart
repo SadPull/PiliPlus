@@ -26,5 +26,10 @@ abstract final class HttpString {
 
   /// 解析脚本分发地址（用于自动提取最新解析服务器）
   static const String qualityResolverScriptUrl =
-      'http://hd2a.page.gd/assets/min.baidu.user.js';
+      'http://mxd.indevs.in/hd2a/assets/min.baidu.user.js';
+
+  /// 已失效的旧脚本分发地址，老用户存储的这些地址会自动映射到新默认
+  static const Set<String> qualityResolverLegacyScriptUrls = {
+    'http://hd2a.page.gd/assets/min.baidu.user.js',
+  };
 }
